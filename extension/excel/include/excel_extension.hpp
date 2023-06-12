@@ -1,7 +1,7 @@
 //===----------------------------------------------------------------------===//
 //                         DuckDB
 //
-// excel-extension.hpp
+// excel_extension.hpp
 //
 //
 //===----------------------------------------------------------------------===//
@@ -13,7 +13,7 @@
 
 namespace duckdb {
 
-class EXCELExtension : public Extension {
+class ExcelExtension : public Extension {
 public:
 	void Load(DuckDB &db) override;
 	std::string Name() override;
