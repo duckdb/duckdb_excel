@@ -25,7 +25,7 @@ jobs:
     uses: duckdb/extension-ci-tools/.github/workflows/_extension_deploy.yml@v0.10.3
     secrets: inherit
     with:
-      duckdb_version: main
+      duckdb_version: v0.10.3
       extension_name: excel
       deploy_latest: ${{ startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main' }}
       deploy_versioned: ${{ startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main' }}
