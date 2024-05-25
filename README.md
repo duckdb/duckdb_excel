@@ -13,3 +13,7 @@ SELECT text(1234567.897, '$#.##') AS result;
 │ $1234567.9 │
 └────────────┘
 ```
+
+# Documentation
+
+See the [Excel page](https://duckdb.org/docs/extensions/excel) in the DuckDB documentation.
