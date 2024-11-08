@@ -10,6 +10,8 @@
 #include "nf_localedata.h"
 #include "nf_zformat.h"
 
+#include "xlsx/read_xlsx.hpp"
+
 namespace duckdb {
 
 static std::string GetNumberFormatString(std::string &format, double num_value) {
@@ -68,6 +70,10 @@ void ExcelExtension::Load(DuckDB &db) {
 	ScalarFunction excel_text_func("excel_text", {LogicalType::DOUBLE, LogicalType::VARCHAR}, LogicalType::VARCHAR,
 	                               NumberFormatFunction);
 	ExtensionUtil::RegisterFunction(db_instance, excel_text_func);
+
+	// Register the XLSX functions
+	ReadXLSX::Register(db_instance);
+	WriteXLSX::Register(db_instance);
 }
 
 std::string ExcelExtension::Name() {

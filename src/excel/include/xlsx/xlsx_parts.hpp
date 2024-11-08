@@ -1,0 +1,231 @@
+#pragma once
+
+#include "duckdb/common/string.hpp"
+#include "duckdb/common/typedefs.hpp"
+#include "duckdb/common/types.hpp"
+#include "duckdb/common/exception/binder_exception.hpp"
+
+namespace duckdb {
+
+//-------------------------------------------------------------------
+// Constants
+//-------------------------------------------------------------------
+
+constexpr auto XLSX_MAX_CELL_SIZE = 32767UL;
+constexpr auto XLSX_MAX_CELL_ROWS = 1048576UL;
+constexpr auto XLSX_MAX_CELL_COLS = 16384UL;
+
+//-------------------------------------------------------------------------
+// Cell position
+//-------------------------------------------------------------------------
+
+// A cell position in a worksheet
+struct XLSXCellPos {
+	idx_t row; // 1-indexed
+	idx_t col; // 1-indexed
+
+	XLSXCellPos(idx_t row_p, idx_t col_p) : row(row_p), col(col_p) { }
+	XLSXCellPos() : row(1), col(1) { }
+
+	// Try to parse a cell from a string, e.g. "A1"
+	// returns the position after the cell, or nullptr if parsing failed
+	const char* TryParse(const char *str);
+	string ToString() const;
+};
+
+inline const char *XLSXCellPos::TryParse(const char *str) {
+	// Parse the column
+	col = 0;
+	auto did_not_parse_col = false;
+	while(*str >= 'A' && *str <= 'Z') {
+		col = col * 26 + (*str - 'A' + 1);
+		str++;
+	}
+	if(col == 0) {
+		col = XLSX_MAX_CELL_COLS;
+		did_not_parse_col = true;
+	}
+
+	// Parse the row
+	row = 0;
+	auto did_not_parse_row = false;
+	if(*str >= '1' && *str <= '9') {
+		row = *str - '0';
+		str++;
+
+		while(*str >= '0' && *str <= '9') {
+			row = row * 10 + (*str - '0');
+			str++;
+		}
+	} else {
+		row = XLSX_MAX_CELL_ROWS;
+		did_not_parse_row = true;
+	}
+
+	if(did_not_parse_col && did_not_parse_row) {
+		// Well, we had to parse something...
+		return nullptr;
+	}
+
+	return str;
+}
+
+inline string XLSXCellPos::ToString() const {
+	D_ASSERT(col != 0 && row != 0);
+
+	string result;
+	idx_t col = this->col - 1;
+	do {
+		result = static_cast<char>('A' + col % 26) + result;
+		col /= 26;
+	} while(col > 0);
+	result += std::to_string(row);
+	return result;
+}
+
+//-------------------------------------------------------------------------
+// Cell Range
+//-------------------------------------------------------------------------
+
+// A range of cells in a worksheet
+struct XLSXCellRange {
+
+	// 1-indexed, inclusive
+	XLSXCellPos beg = {1, 1};
+	// 1-indexed, exlusive
+	XLSXCellPos end = {XLSX_MAX_CELL_ROWS, XLSX_MAX_CELL_COLS};
+
+	XLSXCellRange(idx_t beg_row, idx_t beg_col, idx_t end_row, idx_t end_col)
+		: beg(beg_row, beg_col), end(end_row, end_col) { }
+
+	XLSXCellRange() : beg(1, 1), end(XLSX_MAX_CELL_ROWS, XLSX_MAX_CELL_COLS) { }
+
+	// Try to parse a range from a string, e.g. "A1:B2"
+	// returns the position after the range, or nullptr if parsing failed
+	const char* TryParse(const char* str);
+
+	bool ContainsRow(const idx_t row) const { return row >= beg.row && row < end.row; }
+	bool ContainsCol(const idx_t col) const { return col >= beg.col && col < end.col; }
+	bool ContainsPos(const XLSXCellPos &pos) const { return ContainsCol(pos.col) && ContainsRow(pos.row); }
+
+	idx_t Width() const { return end.col - beg.col; }
+	idx_t Height() const { return end.row - beg.row; }
+	bool IsValid() const { return beg.row <= end.row && beg.col <= end.col; }
+};
+
+inline const char* XLSXCellRange::TryParse(const char* str) {
+	// Parse the beginning cell
+
+	XLSXCellPos beg_result = {1, 1};
+	str = beg_result.TryParse(str);
+	if(!str) {
+		return nullptr;
+	}
+
+	// Parse the colon
+	if(*str != ':') {
+		return nullptr;
+	}
+	str++;
+
+	// Parse the ending cell
+	XLSXCellPos end_result = {XLSX_MAX_CELL_ROWS, XLSX_MAX_CELL_COLS};
+	str = end_result.TryParse(str);
+	if(!str) {
+		return nullptr;
+	}
+
+	// Success
+	beg = beg_result;
+	end = end_result;
+
+	return str;
+}
+
+enum class XLSXCellType : uint8_t { UNKNOWN, NUMBER, BOOLEAN, SHARED_STRING, INLINE_STRING, DATE, ERROR, FORMULA_STRING };
+
+static XLSXCellType ParseCellType(const char* ctype) {
+	// If no type is specified, assume it is a number
+	if(!ctype) {
+		return XLSXCellType::NUMBER;
+	}
+	if (strcmp(ctype, "n") == 0) {
+		return XLSXCellType::NUMBER;
+	}
+	if (strcmp(ctype, "s") == 0) {
+		return XLSXCellType::SHARED_STRING;
+	}
+	if (strcmp(ctype, "d") == 0) {
+		return XLSXCellType::DATE;
+	}
+	if (strcmp(ctype, "inlineStr") == 0) {
+		return XLSXCellType::INLINE_STRING;
+	}
+	if (strcmp(ctype, "str") == 0){
+		return XLSXCellType::FORMULA_STRING;
+	}
+	if (strcmp(ctype, "b") == 0) {
+		return XLSXCellType::BOOLEAN;
+	}
+	if (strcmp(ctype, "e") == 0) {
+		return XLSXCellType::ERROR;
+	}
+	return XLSXCellType::UNKNOWN;
+}
+
+//-------------------------------------------------------------------------
+// Style Sheet
+//-------------------------------------------------------------------------
+class XLSXStyleSheet {
+public:
+	XLSXStyleSheet() = default;
+	explicit XLSXStyleSheet(vector<LogicalType> &&formats_p) : formats(std::move(formats_p)) { }
+	LogicalType GetFormat(const idx_t idx) const {
+		if(idx < formats.size()) {
+			return formats[idx];
+		}
+		// Only numbers have styles, so default to double
+		return LogicalType::DOUBLE;
+	}
+
+	vector<LogicalType> formats;
+};
+
+//-------------------------------------------------------------------------
+// Cell
+//-------------------------------------------------------------------------
+
+struct XLSXCell {
+	XLSXCellType type;
+	XLSXCellPos  cell;
+	string		 data;
+	idx_t		 style;
+
+	XLSXCell(XLSXCellType type_p, XLSXCellPos cell_p, string data_p, idx_t style_p)
+		: type(type_p), cell(cell_p), data(std::move(data_p)), style(style_p) { }
+
+	LogicalType GetDuckDBType(bool all_varchar, const XLSXStyleSheet &style_sheet) {
+		if(all_varchar) {
+			return LogicalType::VARCHAR;
+		}
+		switch(type) {
+		case XLSXCellType::NUMBER:
+			// The logical type of a number is dependent on the style of the cell
+				// Some styles are dates, some are doubles, some are integers
+					return style_sheet.GetFormat(style);
+		case XLSXCellType::BOOLEAN:
+			return LogicalType::BOOLEAN;
+		case XLSXCellType::SHARED_STRING:
+		case XLSXCellType::INLINE_STRING:
+		case XLSXCellType::FORMULA_STRING:
+		case XLSXCellType::ERROR:
+			return LogicalType::VARCHAR;
+		case XLSXCellType::DATE:
+			return LogicalType::DATE;
+		default:
+			throw BinderException("Unknown cell type in xlsx file");
+		}
+	}
+};
+
+}

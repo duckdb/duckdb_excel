@@ -46,6 +46,7 @@ struct mz_stream_duckdb {
 	mz_stream base;
 	FileSystem *fs;
 	FileHandle *handle;
+	string last_error;
 };
 
 int32_t mz_stream_duckdb_open(void *stream, const char *path, int32_t mode) {
@@ -55,6 +56,7 @@ int32_t mz_stream_duckdb_open(void *stream, const char *path, int32_t mode) {
 		self.handle->Close();
 		self.handle->~FileHandle();
 		self.handle = nullptr;
+		self.last_error.clear();
 	}
 
 	FileOpenFlags flags = 0;
@@ -82,7 +84,9 @@ int32_t mz_stream_duckdb_open(void *stream, const char *path, int32_t mode) {
 			return MZ_OPEN_ERROR;
 		}
 		self.handle = file.release();
-	} catch (...) {
+	} catch (Exception &ex) {
+		ErrorData err(ex);
+		self.last_error = err.RawMessage();
 		return MZ_OPEN_ERROR;
 	}
 	return MZ_OK;
@@ -181,11 +185,19 @@ ZipFileWriter::ZipFileWriter(ClientContext &context, const string &file_name) {
 	duckdb_stream.handle = nullptr;
 
 	if (mz_stream_open(stream, file_name.c_str(), MZ_OPEN_MODE_CREATE | MZ_OPEN_MODE_WRITE) != MZ_OK) {
-		throw IOException("Failed to open file for writing");
+		if(duckdb_stream.last_error.empty()) {
+			throw IOException("Failed to open file for writing");
+		} else {
+			throw IOException(duckdb_stream.last_error);
+		}
 	}
 
 	if (mz_zip_writer_open(handle, stream, 0) != MZ_OK) {
-		throw IOException("Failed to open zip for writing");
+		if(duckdb_stream.last_error.empty()) {
+			throw IOException("Failed to open zip for writing");
+		} else {
+			throw IOException(duckdb_stream.last_error);
+		}
 	}
 }
 
@@ -293,11 +305,19 @@ ZipFileReader::ZipFileReader(ClientContext &context, const string &file_name) {
 	duckdb_stream.handle = nullptr;
 
 	if (mz_stream_open(stream, file_name.c_str(), MZ_OPEN_MODE_READ) != MZ_OK) {
-		throw IOException("Failed to open file for reading");
+		if(duckdb_stream.last_error.empty()) {
+			throw IOException("Failed to open file for reading");
+		} else {
+			throw IOException(duckdb_stream.last_error);
+		}
 	}
 
 	if (mz_zip_reader_open(handle, stream) != MZ_OK) {
-		throw IOException("Failed to open zip for reading");
+		if(duckdb_stream.last_error.empty()) {
+			throw IOException("Failed to open zip for reading");
+		} else {
+			throw IOException(duckdb_stream.last_error);
+		}
 	}
 }
 
