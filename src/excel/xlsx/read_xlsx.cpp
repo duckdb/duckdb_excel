@@ -928,12 +928,13 @@ void HeaderSniffer::OnEndRow(const idx_t row_idx) {
 
 class SheetParser final : public SheetParserBase {
 public:
-	explicit SheetParser(ClientContext &context, const XLSXCellRange &range_p, const StringTable &table)
-		: string_table(table), range(range_p) {
+	explicit SheetParser(ClientContext &context, const XLSXCellRange &range_p, const StringTable &table, bool stop_at_empty_p)
+		: string_table(table), range(range_p), stop_at_empty(stop_at_empty_p) {
 
 		// Initialize the chunk
 		const vector<LogicalType> types(range.Width(), LogicalType::VARCHAR);
-		chunk.Initialize(context, types);
+		auto &buffer_alloc = BufferAllocator::Get(context);
+		chunk.Initialize(buffer_alloc, types);
 
 		// Set the beginning column
 		// Allocate the sheet row number mapping
@@ -947,7 +948,7 @@ public:
 		const auto sheet_row = sheet_row_number[chunk_row];
 		const auto sheet_col = chunk_col + range.beg.col;
 
-		const XLSXCellPos pos = {sheet_col, static_cast<idx_t>(sheet_row)};
+		const XLSXCellPos pos = {static_cast<idx_t>(sheet_row), sheet_col};
 		return pos.ToString();
 	}
 
@@ -969,6 +970,9 @@ private:
 
 	// The last column we wrote to
 	idx_t last_col = 0;
+
+	bool stop_at_empty = true;
+	bool is_row_empty = false;
 };
 
 void SheetParser::OnCell(const XLSXCellPos &pos, XLSXCellType type, vector<char> &data, idx_t style) {
@@ -1008,6 +1012,10 @@ void SheetParser::OnCell(const XLSXCellPos &pos, XLSXCellType type, vector<char>
 		ptr[out_index] = StringVector::AddString(vec, data.data(), data.size());
 	}
 
+	if(!data.empty()) {
+		is_row_empty = false;
+	}
+
 	last_col = pos.col;
 }
 
@@ -1018,11 +1026,17 @@ void SheetParser::OnBeginRow(idx_t row_idx) {
 	}
 
 	last_col = range.beg.col - 1;
+	is_row_empty = true;
 }
 
 void SheetParser::OnEndRow(idx_t row_idx) {
 	if(!range.ContainsRow(row_idx)) {
 		// not in range, skip
+		return;
+	}
+
+	if(stop_at_empty && is_row_empty) {
+		Stop(false);
 		return;
 	}
 
@@ -1174,6 +1188,7 @@ public:
 	vector<XLSXCellType> source_types;
 
 	bool ignore_errors = false;
+	bool stop_at_empty = true;
 
 	// The range of the content in the sheet
 	XLSXCellRange content_range;
@@ -1246,6 +1261,7 @@ static unique_ptr<FunctionData> Bind(ClientContext &context, TableFunctionBindIn
 		range.end.row++;
 
 		detect_range = false;
+		result->stop_at_empty = false;
 	}
 
 	// Parse the styles (so we can handle dates)
@@ -1316,8 +1332,8 @@ static unique_ptr<FunctionData> Bind(ClientContext &context, TableFunctionBindIn
 //-------------------------------------------------------------------
 class XLSXGlobalState final : public GlobalTableFunctionState {
 public:
-	explicit XLSXGlobalState(ClientContext &context, const string &file_name, const XLSXCellRange &range)
-		: archive(context, file_name), strings(BufferAllocator::Get(context)), parser(context, range, strings),
+	explicit XLSXGlobalState(ClientContext &context, const string &file_name, const XLSXCellRange &range, bool stop_at_empty)
+		: archive(context, file_name), strings(BufferAllocator::Get(context)), parser(context, range, strings, stop_at_empty),
 		buffer(make_unsafe_uniq_array_uninitialized<char>(BUFFER_SIZE)), cast_vec(LogicalType::DOUBLE) {}
 
 	ZipFileReader archive;
@@ -1339,7 +1355,7 @@ public:
 
 static unique_ptr<GlobalTableFunctionState> InitGlobal(ClientContext &context, TableFunctionInitInput &input) {
 	auto &data = input.bind_data->Cast<XLSXFunctionData>();
-	auto state = make_uniq<XLSXGlobalState>(context, data.file_path, data.content_range);
+	auto state = make_uniq<XLSXGlobalState>(context, data.file_path, data.content_range, data.stop_at_empty);
 
 	// Check if there is a string table. If there is, extract it
 	if(state->archive.TryOpenEntry("xl/sharedStrings.xml")) {
