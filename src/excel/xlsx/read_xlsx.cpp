@@ -720,22 +720,6 @@ void SheetParserBase::OnEndElement(const char *name) {
 //-------------------------------------------------------------------
 // Range Sniffer
 //-------------------------------------------------------------------
-// TODO:
-// Decide here:
-// If the user has supplied a range:
-//	 We should consider the WHOLE first row of the range when deciding if it is a header or no
-//   If we didnt parse enough, we should pad the begining or end with empty strings
-//   We should also pad the values with empty strings
-//	 Then we inspect the header and values cells to determine the types
-// If the user has not supplied a range:
-//   We should use the first contiguos sequence of non-empty cells as the header, and use these as the valid range
-
-// In essence, it might make sense to have two different sniffers for this purpose.
-// Once we have the first row with the second sniffer, we can use that as the range for the first sniffer.
-
-// Make BeginRow and BeginCell return boolean so that we can choose to skip the row/cell or not.
-
-
 // The range sniffer is used to determine the range of the sheet to scan
 class RangeSniffer final : public SheetParserBase {
 public:
@@ -808,6 +792,8 @@ void RangeSniffer::OnEndRow(const idx_t row_idx) {
 //-------------------------------------------------------------------
 // Header Sniffer
 //-------------------------------------------------------------------
+// The header sniffer is used to determine the header and the types
+// of the columns in the sheet (within the range)
 
 enum class XLSXHeaderMode : uint8_t { NEVER, MAYBE, FORCE };
 
@@ -936,236 +922,20 @@ void HeaderSniffer::OnEndRow(const idx_t row_idx) {
 }
 
 
-/*
-// Either the user supplies a range, and we treat the WHOLE range as a table
-// Or, the user does not supply a range, and we try to infer it ourselves.
-class HeaderSniffer final : public SheetParser {
-	// Detects the header row and types within a range
-private:
-	void OnBeginRow(idx_t row_idx) override;
-	void OnEndRow(idx_t row_idx) override;
-	void OnCell(const XLSXCellPos &pos, XLSXCellType type, vector<char> &data, idx_t style) override;
-private:
-	XLSXCellRange search_range;
-
-	vector<XLSXCell> header_cells;
-	vector<XLSXCell> values_cells;
-
-	bool header_found = false;
-};
-
-void HeaderSniffer::OnBeginRow(idx_t row_idx) {
-	if(search_range.ContainsRow(row_idx)) {
-		// We're in the search range
-	}
-}
-
-void HeaderSniffer::OnCell(const XLSXCellPos &pos, XLSXCellType type, vector<char> &data, idx_t style) {
-	if(!search_range.ContainsPos(pos)) {
-		return;
-	}
-	values_cells.emplace_back(type, pos, string(data.data(), data.size()), style);
-}
-
-void HeaderSniffer::OnEndRow(idx_t row_idx) {
-	if(!search_range.ContainsRow(row_idx)) {
-		return;
-	}
-
-
-
-	if(header_found) {
-		// We've already found the header, so we're done
-		Stop(false);
-		return;
-	}
-
-	header_cells = values_cells;
-}
-
-*/
-
-
-class SheetReader : public XMLParser {
-protected:
-	// Called when a cell has been parsed
-	virtual void OnCell(XLSXCellPos &pos, XLSXCellType type, vector<char> &data, idx_t style) = 0;
-	// Called when a row has been parsed
-	virtual void OnRow(idx_t row_idx) = 0;
-private:
-	void OnStartElement(const char *name, const char **atts) override {
-		switch (state) {
-		case State::START:
-			if(MatchTag("sheetData", name)) {
-				state = State::SHEETDATA;
-			}
-			break;
-		case State::SHEETDATA:
-			if(MatchTag("row", name)) {
-				state = State::ROW;
-
-				const char *rref_ptr = nullptr;
-				for(idx_t i = 0; atts[i]; i += 2) {
-					if(strcmp(atts[i], "r") == 0) {
-						rref_ptr = atts[i + 1];
-					}
-				}
-				if(!rref_ptr) {
-					//throw InvalidInputException("Invalid row reference in sheet");
-					// Not all rows have a reference, so we can ignore this
-					cell_pos.row++;
-				} else {
-					cell_pos.row = strtol(rref_ptr, nullptr, 10);
-				}
-				row_in_range = cell_range.ContainsRow(cell_pos.row);
-			}
-			break;
-		case State::ROW:
-			if(row_in_range && MatchTag("c", name)) {
-				state = State::CELL;
-				const char* type_ptr = nullptr;
-				const char* cref_ptr = nullptr;
-				const char* style_ptr = nullptr;
-				for(idx_t i = 0; atts[i]; i += 2) {
-					if(strcmp(atts[i], "t") == 0) {
-						type_ptr = atts[i + 1];
-					} else if (strcmp(atts[i], "r") == 0) {
-						cref_ptr = atts[i + 1];
-					} else if (strcmp(atts[i], "s") == 0) {
-						style_ptr = atts[i + 1];
-					}
-				}
-				if(cref_ptr) {
-					if(!cell_pos.TryParse(cref_ptr)) {
-						throw InvalidInputException("Invalid cell reference in sheet");
-					}
-				} else {
-					// Not all cells have a reference, so just move to the next one
-					cell_pos.col++;
-				}
-				cell_type = ParseCellType(type_ptr);
-				cell_style = style_ptr ? strtol(style_ptr, nullptr, 10) : 0;
-				col_in_range = cell_range.ContainsCol(cell_pos.col);
-			}
-			break;
-		case State::CELL:
-			if(col_in_range && MatchTag("v", name)) {
-				state = State::V;
-				EnableTextHandler(true);
-				break;
-			}
-			if(col_in_range && MatchTag("is", name)) {
-				state = State::IS;
-				break;
-			}
-			break;
-		case State::IS:
-			if(MatchTag("t", name)) {
-				state = State::T;
-				EnableTextHandler(true);
-			}
-			break;
-		default:
-			break;
-		}
-	}
-
-	void OnEndElement(const char *name) override {
-		switch(state) {
-			case State::V:
-				if(MatchTag("v", name)) {
-					EnableTextHandler(false);
-					state = State::CELL;
-				}
-				break;
-			case State::T:
-				if(MatchTag("t", name)) {
-					EnableTextHandler(false);
-					state = State::IS;
-				}
-				break;
-			case State::IS:
-				if(MatchTag("is", name)) {
-					state = State::CELL;
-				}
-				break;
-			case State::CELL:
-				if(MatchTag("c", name)) {
-					state = State::ROW;
-
-					if(col_in_range) {
-						OnCell(cell_pos, cell_type, cell_data, cell_style);
-						cell_data.clear();
-					}
-				}
-				break;
-			case State::ROW:
-				if(MatchTag("row", name)) {
-					state = State::SHEETDATA;
-
-					if(row_in_range) {
-						OnRow(cell_pos.row);
-					}
-				}
-				break;
-			case State::SHEETDATA:
-				if(MatchTag("sheetData", name)) {
-					Stop(false);
-				}
-				break;
-			default:
-				break;
-		}
-	}
-
-	void OnText(const char *text, idx_t len) override {
-		if(cell_data.size() + len > XLSX_MAX_CELL_SIZE * 2) {
-			// Something is obviously wrong, error our!
-			throw InvalidInputException("XLSX: Cell data too large (is the file corrupted?)");
-		}
-
-		cell_data.insert(cell_data.end(), text, text + len);
-	}
-
-	enum class State : uint8_t {
-		START,
-		SHEETDATA,
-		ROW,
-		CELL,
-		V,
-		IS,
-		T,
-	};
-
-	State state = State::START;
-	vector<char> cell_data = {};
-	XLSXCellType cell_type = XLSXCellType::UNKNOWN;
-	XLSXCellPos cell_pos = {0, 0};
-	idx_t cell_style = 0;
-	XLSXCellRange cell_range;
-
-	bool row_in_range = false;
-	bool col_in_range = false;
-
-protected:
-	explicit SheetReader(const XLSXCellRange &range) : cell_range(range) { }
-};
-
 //-------------------------------------------------------------------
 // Sheet Parser
 //-------------------------------------------------------------------
 
-class SheetParser final : public SheetReader {
+class SheetParser final : public SheetParserBase {
 public:
-	explicit SheetParser(ClientContext &context, const XLSXCellRange &range, const StringTable &table)
-		: SheetReader(range), string_table(table) {
+	explicit SheetParser(ClientContext &context, const XLSXCellRange &range_p, const StringTable &table)
+		: string_table(table), range(range_p) {
 
 		// Initialize the chunk
 		const vector<LogicalType> types(range.Width(), LogicalType::VARCHAR);
 		chunk.Initialize(context, types);
 
 		// Set the beginning column
-		beg_col = range.beg.col;
 		// Allocate the sheet row number mapping
 		sheet_row_number = make_unsafe_uniq_array<idx_t>(STANDARD_VECTOR_SIZE);
 	}
@@ -1175,18 +945,21 @@ public:
 	string GetCellName(idx_t chunk_row, idx_t chunk_col) const {
 		// Get the cell name and row given a chunk row and column
 		const auto sheet_row = sheet_row_number[chunk_row];
-		const auto sheet_col = chunk_col + beg_col;
+		const auto sheet_col = chunk_col + range.beg.col;
 
 		const XLSXCellPos pos = {sheet_col, static_cast<idx_t>(sheet_row)};
 		return pos.ToString();
 	}
 
 protected:
-	void OnCell(XLSXCellPos &pos, XLSXCellType type, vector<char> &data, idx_t style) override;
-	void OnRow(idx_t row_idx) override;
+	void OnBeginRow(idx_t row_idx) override;
+	void OnEndRow(idx_t row_idx) override;
+	void OnCell(const XLSXCellPos &pos, XLSXCellType type, vector<char> &data, idx_t style) override;
 private:
 	// Shared String Table
 	const StringTable &string_table;
+	// Range to read
+	XLSXCellRange range;
 	// Mapping from chunk row to sheet row
 	unsafe_unique_array<idx_t> sheet_row_number;
 	// Current chunk
@@ -1194,13 +967,26 @@ private:
 	// Current row in the chunk
 	idx_t out_index = 0;
 
-	// The sheet column index of the first chunk column
-	idx_t beg_col;
+	// The last column we wrote to
+	idx_t last_col = 0;
 };
 
-void SheetParser::OnCell(XLSXCellPos &pos, XLSXCellType type, vector<char> &data, idx_t style) {
+void SheetParser::OnCell(const XLSXCellPos &pos, XLSXCellType type, vector<char> &data, idx_t style) {
+	if(!range.ContainsPos(pos)) {
+		// not in range, skip
+		return;
+	}
+
+	// If we jumped over some columns, pad with nulls
+	if(last_col + 1 < pos.col) {
+		for(idx_t i = last_col + 1; i < pos.col; i++) {
+			auto &vec = chunk.data[i - range.beg.col];
+			FlatVector::SetNull(vec, out_index, true);
+		}
+	}
+
 	// Get the column data
-	auto &vec = chunk.data[pos.col - beg_col];
+	auto &vec = chunk.data[pos.col - range.beg.col];
 
 	// Push the cell data to our chunk
 	const auto ptr = FlatVector::GetData<string_t>(vec);
@@ -1221,9 +1007,33 @@ void SheetParser::OnCell(XLSXCellPos &pos, XLSXCellType type, vector<char> &data
 		// Otherwise just pass along the call data, we will cast it later.
 		ptr[out_index] = StringVector::AddString(vec, data.data(), data.size());
 	}
+
+	last_col = pos.col;
 }
 
-void SheetParser::OnRow(idx_t row_idx) {
+void SheetParser::OnBeginRow(idx_t row_idx) {
+	if(!range.ContainsRow(row_idx)) {
+		// not in range, skip
+		return;
+	}
+
+	last_col = range.beg.col - 1;
+}
+
+void SheetParser::OnEndRow(idx_t row_idx) {
+	if(!range.ContainsRow(row_idx)) {
+		// not in range, skip
+		return;
+	}
+
+	// If we didnt write out all the columns, pad with nulls
+	if(last_col + 1 < range.end.col) {
+		for(idx_t i = last_col + 1; i < range.end.col; i++) {
+			auto &vec = chunk.data[i - range.beg.col];
+			FlatVector::SetNull(vec, out_index, true);
+		}
+	}
+
 	// Map the chunk row to the sheet row
 	sheet_row_number[out_index] = UnsafeNumericCast<int32_t>(row_idx);
 
