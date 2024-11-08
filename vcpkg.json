@@ -1,4 +1,11 @@
 {
   "dependencies": [
+    "expat",
+    "zlib",
+    {
+      "name": "minizip-ng",
+      "default-features": false,
+      "features": ["zlib"]
+    }
   ]
 }
