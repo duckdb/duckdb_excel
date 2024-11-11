@@ -800,7 +800,8 @@ enum class XLSXHeaderMode : uint8_t { NEVER, MAYBE, FORCE };
 class HeaderSniffer final : public SheetParserBase {
 public:
 	HeaderSniffer(const XLSXCellRange &range_p, const XLSXHeaderMode header_mode_p)
-		: range(range_p), header_mode(header_mode_p) { }
+		: range(range_p), header_mode(header_mode_p) {
+	}
 
 	const XLSXCellRange &GetRange() const { return range; }
 	vector<XLSXCell> &GetColumnCells() { return column_cells; }
@@ -939,18 +940,20 @@ public:
 		// Set the beginning column
 		// Allocate the sheet row number mapping
 		sheet_row_number = make_unsafe_uniq_array<idx_t>(STANDARD_VECTOR_SIZE);
+
+		last_row = range.beg.row - 1;
+		curr_row = range.beg.row;
+		last_col = range.beg.col - 1;
 	}
 
 	DataChunk& GetChunk() { return chunk; }
+	string GetCellName(idx_t chunk_row, idx_t chunk_col) const;
 
-	string GetCellName(idx_t chunk_row, idx_t chunk_col) const {
-		// Get the cell name and row given a chunk row and column
-		const auto sheet_row = sheet_row_number[chunk_row];
-		const auto sheet_col = chunk_col + range.beg.col;
-
-		const XLSXCellPos pos = {static_cast<idx_t>(sheet_row), sheet_col};
-		return pos.ToString();
-	}
+	// Returns true if the chunk is full
+	bool FoundSkippedRow() const;
+	void SkipRows();
+	// Fill empty rows to the end of the range
+	void FillRows();
 
 protected:
 	void OnBeginRow(idx_t row_idx) override;
@@ -969,11 +972,102 @@ private:
 	idx_t out_index = 0;
 
 	// The last column we wrote to
-	idx_t last_col = 0;
+	idx_t last_col;
+	// The last row we wrote to
+	idx_t last_row;
+	idx_t curr_row;
 
 	bool stop_at_empty = true;
 	bool is_row_empty = false;
 };
+
+string SheetParser::GetCellName(idx_t chunk_row, idx_t chunk_col) const {
+	// Get the cell name and row given a chunk row and column
+	const auto sheet_row = sheet_row_number[chunk_row];
+	const auto sheet_col = chunk_col + range.beg.col;
+
+	const XLSXCellPos pos = {static_cast<idx_t>(sheet_row), sheet_col};
+	return pos.ToString();
+}
+
+bool SheetParser::FoundSkippedRow() const {
+	return last_row + 1 < curr_row;
+}
+
+void SheetParser::SkipRows() {
+	// Pad empty rows
+	while (last_row + 1 < curr_row) {
+		last_row++;
+
+		for(auto &col : chunk.data) {
+			FlatVector::SetNull(col, out_index, true);
+		}
+		sheet_row_number[out_index] = last_row;
+		out_index++;
+		chunk.SetCardinality(out_index);
+
+		if(out_index == STANDARD_VECTOR_SIZE) {
+			// We have filled up the chunk, yield!
+			out_index = 0;
+			return;
+		}
+	}
+}
+
+void SheetParser::FillRows() {
+	const auto total_remaining = range.end.row - 1 - last_row;
+	const auto local_remaining = STANDARD_VECTOR_SIZE - out_index;
+
+	const auto remaining = MinValue(total_remaining, local_remaining);
+	for(idx_t i = 0; i < remaining; i++) {
+		for(auto &col : chunk.data) {
+			FlatVector::SetNull(col, out_index, true);
+		}
+		sheet_row_number[out_index] = last_row;
+		out_index++;
+		last_row++;
+	}
+	chunk.SetCardinality(chunk.size() + remaining);
+	out_index = 0;
+}
+
+
+void SheetParser::OnBeginRow(idx_t row_idx) {
+	if(!range.ContainsRow(row_idx)) {
+		// not in range, skip
+		return;
+	}
+
+	last_col = range.beg.col - 1;
+	is_row_empty = true;
+
+	curr_row = row_idx;
+
+	// Check if we need to pad empty rows
+	if(last_row + 1 < curr_row) {
+		Stop(true);
+	}
+
+	// Pad empty rows
+	/*
+	if(last_row + 1 < row_idx) {
+		for(idx_t i = last_row + 1; i < row_idx; i++) {
+			for(idx_t j = 0; j < chunk.data.size(); j++) {
+				auto &v = chunk.data[j];
+				FlatVector::SetNull(v, out_index, true);
+			}
+			out_index++;
+			chunk.SetCardinality(out_index);
+			if(out_index == STANDARD_VECTOR_SIZE) {
+				// We have filled up the chunk, yield!
+				out_index = 0;
+				last_row = i;
+				Stop(true);
+			}
+		}
+	}
+	*/
+}
 
 void SheetParser::OnCell(const XLSXCellPos &pos, XLSXCellType type, vector<char> &data, idx_t style) {
 	if(!range.ContainsPos(pos)) {
@@ -1019,21 +1113,14 @@ void SheetParser::OnCell(const XLSXCellPos &pos, XLSXCellType type, vector<char>
 	last_col = pos.col;
 }
 
-void SheetParser::OnBeginRow(idx_t row_idx) {
-	if(!range.ContainsRow(row_idx)) {
-		// not in range, skip
-		return;
-	}
-
-	last_col = range.beg.col - 1;
-	is_row_empty = true;
-}
 
 void SheetParser::OnEndRow(idx_t row_idx) {
 	if(!range.ContainsRow(row_idx)) {
 		// not in range, skip
 		return;
 	}
+
+	last_row = row_idx;
 
 	if(stop_at_empty && is_row_empty) {
 		Stop(false);
@@ -1298,7 +1385,14 @@ static unique_ptr<FunctionData> Bind(ClientContext &context, TableFunctionBindIn
 
 	if(column_cells.empty()) {
 		if(header_cells.empty()) {
-			throw BinderException("No rows found in xlsx file");
+			if(detect_range) {
+				throw BinderException("No rows found in xlsx file");
+			}
+			// Otherwise, add a header row with the column names in the range
+			for(idx_t i = range.beg.col; i < range.end.col; i++) {
+				XLSXCellPos pos(range.beg.row, i);
+				header_cells.emplace_back(XLSXCellType::NUMBER, pos, pos.ToString(), 0);
+			}
 		}
 		// Else, we have a header row but no data rows
 		// Users seem to expect this to work, so we allow it by creating an empty dummy row of numbers
@@ -1469,15 +1563,26 @@ static void Execute(ClientContext &context, TableFunctionInput &data, DataChunk 
 	auto &chunk = parser.GetChunk();
 	chunk.Reset();
 
-	// Parse as much as we can until the parser yields (the chunk is full) or we run out of data
-	while(!stream.IsDone()) {
+	while(chunk.size() != STANDARD_VECTOR_SIZE) {
 		if(status == XMLParseResult::SUSPENDED) {
-			// We need to resume parsing
-			status = parser.Resume();
-			if(status == XMLParseResult::SUSPENDED) {
-				// Still suspended! Return the chunk
-				break;
+			if(parser.FoundSkippedRow()) {
+				if(bind_data.stop_at_empty) {
+					status = XMLParseResult::ABORTED;
+					break;
+				}
+				parser.SkipRows();
+				continue;
 			}
+
+			// We need more data
+			status = parser.Resume();
+			continue;
+		}
+		if(stream.IsDone()) {
+			break;
+		}
+		if(status == XMLParseResult::ABORTED) {
+			break;
 		}
 
 		// Otherwise, read more data
@@ -1487,10 +1592,11 @@ static void Execute(ClientContext &context, TableFunctionInput &data, DataChunk 
 		gstate.stream_pos += read_size;
 
 		status = parser.Parse(buffer, read_size, stream.IsDone());
-		if(status == XMLParseResult::SUSPENDED) {
-			// We need to return the chunk
-			break;
-		}
+	}
+
+	// Pad with empty rows if wanted (and needed)
+	if(!bind_data.stop_at_empty) {
+		parser.FillRows();
 	}
 
 	// Cast all the strings to the correct types, unless they are already strings in which case we reference them
