@@ -31,6 +31,7 @@ struct XLSXCellPos {
 	// returns the position after the cell, or nullptr if parsing failed
 	const char* TryParse(const char *str);
 	string ToString() const;
+	string GetColumnName() const;
 };
 
 inline const char *XLSXCellPos::TryParse(const char *str) {
@@ -72,14 +73,19 @@ inline const char *XLSXCellPos::TryParse(const char *str) {
 
 inline string XLSXCellPos::ToString() const {
 	D_ASSERT(col != 0 && row != 0);
+	string result = GetColumnName();
+	result += std::to_string(row);
+	return result;
+}
 
+inline string XLSXCellPos::GetColumnName() const {
+	D_ASSERT(col != 0);
 	string result;
 	idx_t col = this->col - 1;
 	do {
 		result = static_cast<char>('A' + col % 26) + result;
 		col /= 26;
 	} while(col > 0);
-	result += std::to_string(row);
 	return result;
 }
 

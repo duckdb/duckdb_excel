@@ -799,8 +799,8 @@ enum class XLSXHeaderMode : uint8_t { NEVER, MAYBE, FORCE };
 
 class HeaderSniffer final : public SheetParserBase {
 public:
-	HeaderSniffer(const XLSXCellRange &range_p, const XLSXHeaderMode header_mode_p)
-		: range(range_p), header_mode(header_mode_p) {
+	HeaderSniffer(const XLSXCellRange &range_p, const XLSXHeaderMode header_mode_p, const bool absolute_range_p)
+		: range(range_p), header_mode(header_mode_p), absolute_range(absolute_range_p) {
 	}
 
 	const XLSXCellRange &GetRange() const { return range; }
@@ -820,6 +820,8 @@ private:
 
 	vector<XLSXCell> header_cells;
 	vector<XLSXCell> column_cells;
+
+	bool absolute_range;
 };
 
 void HeaderSniffer::OnBeginRow(const idx_t row_idx) {
@@ -904,7 +906,11 @@ void HeaderSniffer::OnEndRow(const idx_t row_idx) {
 		for(auto &cell : header_cells) {
 			cell.type = XLSXCellType::INLINE_STRING;
 			cell.style = 0;
-			cell.data = cell.cell.ToString();
+			if(absolute_range) {
+				cell.data = cell.cell.ToString();
+			} else {
+				cell.data = cell.cell.GetColumnName();
+			}
 		}
 		Stop(false);
 		return;
@@ -1047,26 +1053,6 @@ void SheetParser::OnBeginRow(idx_t row_idx) {
 	if(last_row + 1 < curr_row) {
 		Stop(true);
 	}
-
-	// Pad empty rows
-	/*
-	if(last_row + 1 < row_idx) {
-		for(idx_t i = last_row + 1; i < row_idx; i++) {
-			for(idx_t j = 0; j < chunk.data.size(); j++) {
-				auto &v = chunk.data[j];
-				FlatVector::SetNull(v, out_index, true);
-			}
-			out_index++;
-			chunk.SetCardinality(out_index);
-			if(out_index == STANDARD_VECTOR_SIZE) {
-				// We have filled up the chunk, yield!
-				out_index = 0;
-				last_row = i;
-				Stop(true);
-			}
-		}
-	}
-	*/
 }
 
 void SheetParser::OnCell(const XLSXCellPos &pos, XLSXCellType type, vector<char> &data, idx_t style) {
@@ -1373,7 +1359,7 @@ static unique_ptr<FunctionData> Bind(ClientContext &context, TableFunctionBindIn
 	if(!archive.TryOpenEntry(result->sheet_path)) {
 		throw BinderException("Sheet '%s' not found in xlsx file", result->sheet_path);
 	}
-	HeaderSniffer sniffer(range, header_mode);
+	HeaderSniffer sniffer(range, header_mode, detect_range);
 	sniffer.ParseAll(archive);
 	archive.CloseEntry();
 
@@ -1574,7 +1560,7 @@ static void Execute(ClientContext &context, TableFunctionInput &data, DataChunk 
 				continue;
 			}
 
-			// We need more data
+			// Resume normally
 			status = parser.Resume();
 			continue;
 		}
