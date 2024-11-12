@@ -1678,5 +1678,4 @@ void ReadXLSX::Register(DatabaseInstance &db) {
 	db.config.replacement_scans.emplace_back(XLSXReplacementScan);
 }
 
-
 } // namespace duckdb

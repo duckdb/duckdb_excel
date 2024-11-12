@@ -36,30 +36,40 @@ struct XLSXCellPos {
 
 inline const char *XLSXCellPos::TryParse(const char *str) {
 	// Parse the column
-	col = 0;
+
 	auto did_not_parse_col = false;
-	while(*str >= 'A' && *str <= 'Z') {
-		col = col * 26 + (*str - 'A' + 1);
+	if(*str >= 'A' && *str <= 'Z') {
+		idx_t p_col = *str - 'A' + 1;
 		str++;
-	}
-	if(col == 0) {
-		col = XLSX_MAX_CELL_COLS;
+
+		while(*str >= 'A' && *str <= 'Z') {
+			p_col = p_col * 26 + (*str - 'A' + 1);
+			str++;
+		}
+
+		if(p_col > XLSX_MAX_CELL_COLS) {
+			return nullptr;
+		}
+		col = p_col;
+	} else {
 		did_not_parse_col = true;
 	}
 
 	// Parse the row
-	row = 0;
 	auto did_not_parse_row = false;
 	if(*str >= '1' && *str <= '9') {
-		row = *str - '0';
+		idx_t p_row = *str - '0';
 		str++;
 
 		while(*str >= '0' && *str <= '9') {
-			row = row * 10 + (*str - '0');
+			p_row = p_row * 10 + (*str - '0');
 			str++;
 		}
+		if(p_row > XLSX_MAX_CELL_ROWS) {
+			return nullptr;
+		}
+		row = p_row;
 	} else {
-		row = XLSX_MAX_CELL_ROWS;
 		did_not_parse_row = true;
 	}
 
@@ -210,7 +220,7 @@ struct XLSXCell {
 	XLSXCell(XLSXCellType type_p, XLSXCellPos cell_p, string data_p, idx_t style_p)
 		: type(type_p), cell(cell_p), data(std::move(data_p)), style(style_p) { }
 
-	LogicalType GetDuckDBType(bool all_varchar, const XLSXStyleSheet &style_sheet) {
+	LogicalType GetDuckDBType(bool all_varchar, const XLSXStyleSheet &style_sheet) const {
 		if(all_varchar) {
 			return LogicalType::VARCHAR;
 		}
