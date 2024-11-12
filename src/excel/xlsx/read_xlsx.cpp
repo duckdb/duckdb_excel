@@ -569,7 +569,7 @@ private:
 class StringTableParser final : public SharedStringsParser {
 public:
 	static void ParseStringTable(ZipFileReader &stream, StringTable &table) {
-		const StringTableParser parser(table);
+		StringTableParser parser(table);
 		parser.ParseAll(stream);
 	}
 private:
@@ -600,7 +600,7 @@ protected:
 	virtual void OnEndRow(idx_t row_idx) {};
 	virtual void OnCell(const XLSXCellPos &pos, XLSXCellType type, vector<char> &data, idx_t style) {}
 private:
-	enum class State : uint8_t { START, SHEETDATA, ROW, CELL, V, IS, T };
+	enum class State : uint8_t { START, SHEETDATA, ROW, EMPTY_ROW, CELL, V, IS, T };
 	State state = State::START;
 
 	XLSXCellPos  cell_pos = {0, 0};
@@ -608,6 +608,20 @@ private:
 	vector<char> cell_data = {};
 	idx_t		 cell_style = 0;
 };
+
+/*
+void SheetParserBase::OnResume() {
+	if(state == State::EMPTY_ROW) {
+		while(cell_pos.row + 1 < target_row) {
+			cell_pos.row++;
+			OnBeginRow(cell_pos.row);
+			if(IsSuspended()) { return; }
+			OnEndRow(cell_pos.row);
+			if(IsSuspended()) { return; }
+		}
+	}
+}
+*/
 
 void SheetParserBase::OnText(const char *text, idx_t len) {
 	if(cell_data.size() + len > XLSX_MAX_CELL_SIZE * 2) {
@@ -623,6 +637,9 @@ void SheetParserBase::OnStartElement(const char *name, const char **atts) {
 	}
 	else if(state == State::SHEETDATA && MatchTag("row", name)) {
 		state = State::ROW;
+
+		// Reset the column position
+		cell_pos.col = 0;
 
 		const char *rref_ptr = nullptr;
 		for(idx_t i = 0; atts[i]; i += 2) {

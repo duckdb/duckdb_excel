@@ -1,0 +1,15 @@
+# Test taken from GDAL and ported to sqllogictests
+
+require excel
+
+query II
+SELECT * FROM 'test/data/xlsx/gdal/row_without_r_attribute.xlsx'
+----
+1	TEST123
+
+
+query II
+SELECT * FROM read_xlsx('test/data/xlsx/gdal/row_without_r_attribute.xlsx', header := false)
+----
+ID	NAME
+1	TEST123
