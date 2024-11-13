@@ -196,14 +196,13 @@ class XLSXStyleSheet {
 public:
 	XLSXStyleSheet() = default;
 	explicit XLSXStyleSheet(vector<LogicalType> &&formats_p) : formats(std::move(formats_p)) { }
-	LogicalType GetFormat(const idx_t idx) const {
+	optional_ptr<const LogicalType> GetFormat(const idx_t idx) const {
 		if(idx < formats.size()) {
-			return formats[idx];
+			return &formats[idx];
 		}
-		// Only numbers have styles, so default to double
-		return LogicalType::DOUBLE;
+		return nullptr;
 	}
-
+private:
 	vector<LogicalType> formats;
 };
 
@@ -220,15 +219,23 @@ struct XLSXCell {
 	XLSXCell(XLSXCellType type_p, XLSXCellPos cell_p, string data_p, idx_t style_p)
 		: type(type_p), cell(cell_p), data(std::move(data_p)), style(style_p) { }
 
-	LogicalType GetDuckDBType(bool all_varchar, const XLSXStyleSheet &style_sheet) const {
+	LogicalType GetDuckDBType(bool all_varchar, const XLSXStyleSheet &style_sheet) {
 		if(all_varchar) {
 			return LogicalType::VARCHAR;
 		}
 		switch(type) {
-		case XLSXCellType::NUMBER:
+		case XLSXCellType::NUMBER: {
 			// The logical type of a number is dependent on the style of the cell
-				// Some styles are dates, some are doubles, some are integers
-					return style_sheet.GetFormat(style);
+			// Some styles are dates, some are doubles, some are integers
+			// (some are even postcodes or phone numbers, but we don't care about those for now)
+			auto optional_type = style_sheet.GetFormat(style);
+			if(optional_type) {
+				return *optional_type;
+			}
+			// Default to double
+			return LogicalType::DOUBLE;
+		}
+
 		case XLSXCellType::BOOLEAN:
 			return LogicalType::BOOLEAN;
 		case XLSXCellType::SHARED_STRING:

@@ -1,12 +1,207 @@
 # Test taken from GDAL and ported to sqllogictests
 
+# Original GDAL/OGR License:
+###############################################################################
+# Copyright (c) 2012, Even Rouault <even dot rouault at spatialys.com>
+#
+# SPDX-License-Identifier: MIT
+###############################################################################
+# In general GDAL/OGR is licensed under an MIT style license with the
+# following terms:
+#
+# Permission is hereby granted, free of charge, to any person obtaining a
+# copy of this software and associated documentation files (the "Software"),
+# to deal in the Software without restriction, including without limitation
+# the rights to use, copy, modify, merge, publish, distribute, sublicense,
+# and/or sell copies of the Software, and to permit persons to whom the
+# Software is furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included
+# in all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+# OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+# THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+# FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+# DEALINGS IN THE SOFTWARE.
+
 require excel
+
+###############################################################################
+# Basic tests
+
+# TODO:
+#query II
+#SELECT * FROM read_xlsx('test/data/xlsx/gdal/test.xlsx', header := true);
+#----
+
+###############################################################################
+# Test HEADERS = DISABLE open option
+# (we also test with FORCE)
+
+query II
+SELECT * FROM read_xlsx('test/data/xlsx/gdal/test.xlsx', header := true);
+----
+3	4
+2.34	NULL
+
+query II
+SELECT column_name, column_type FROM (DESCRIBE FROM read_xlsx('test/data/xlsx/gdal/test.xlsx', header := true));
+----
+Hello world	DOUBLE
+2	DOUBLE
+
+query II
+SELECT * FROM read_xlsx('test/data/xlsx/gdal/test.xlsx', header := false);
+----
+Hello world	2
+3	4
+2.34	NULL
+
+query II
+SELECT column_name, column_type FROM (DESCRIBE FROM read_xlsx('test/data/xlsx/gdal/test.xlsx', header := false));
+----
+A1	VARCHAR
+B1	DOUBLE
+
+###############################################################################
+# Test FIELD_TYPES = STRING open option
+
+query II
+SELECT * FROM read_xlsx('test/data/xlsx/gdal/test.xlsx', all_varchar := true);
+----
+Hello world	2
+3	4
+2.34	NULL
+
+query II
+SELECT typeof(COLUMNS(*)) FROM read_xlsx('test/data/xlsx/gdal/test.xlsx', all_varchar := true);
+----
+VARCHAR	VARCHAR
+VARCHAR	VARCHAR
+VARCHAR	VARCHAR
+
+###############################################################################
+# Run test_ogrsf
+
+# TODO:
+
+###############################################################################
+# Test write support
+
+# TODO:
+
+###############################################################################
+# Test reading a file using inlineStr representation.
+
+query IIIIIIIIIIIII
+SELECT * FROM read_xlsx('test/data/xlsx/gdal/inlineStr.xlsx');
+----
+78 ก.ม.3	Ekkachai	Chai	Sample Placename	Sample Placename	text3	เอกชัย	ซอยเอกชัย 131	text5	text6	text7	120.3797148	23.6247122
+
+###############################################################################
+# Test update support
+
+# TODO:
+
+###############################################################################
+# Test number of columns > 26 (#5774)
+
+# TODO:
+
+###############################################################################
+# Test Integer64
+
+# TODO:
+
+###############################################################################
+# Test DateTime with milliseconds
+
+# TODO:
+
+###############################################################################
+# Test reading sheet with more than 26 columns with holes (#6363)"
+
+query IIIIIIIIIIIIIIIIIIIIIIIIIIIIII
+SELECT * FROM read_xlsx('test/data/xlsx/gdal/not_all_columns_present.xlsx', header := false);
+----
+val1	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	val28	val29	val30
+
+
+###############################################################################
+# Test reading a sheet whose file is stored as "absolute" in
+# workbook.xml.rels (#6733)
+
+query I
+SELECT * FROM read_xlsx('test/data/xlsx/gdal/absolute_sheet_filename.xlsx', header := false);
+----
+Test
+
+###############################################################################
+# Test that data types are correctly picked up even if first row is missing data
+
+# TODO:
+
+###############################################################################
+# Test that field names are picked up even if last field has no data
+
+query IIIIIIIIIIIIIIIIII
+SELECT * FROM read_xlsx('test/data/xlsx/gdal/test_empty_last_field.xlsx');
+----
+1000.0	1 Test Street, Bow, London	KC1 3ML	249200.0	No heating or hot water	2017-12-29	Miss N Tester	079036 789012	07901 231496	n.tester@gmail.com	Test Street	2017-12-29	TEST HEATING	NULL	General Needs	Emergency (24 Hours)	Planned Maintenance - CH/Water Hygiene	NULL
+2000.0	4 Test Way, London	KT4 6JP	249310.0	make safe electrical	2017-12-29	Miss Sally Testing	077957 981231	NULL	NULL	NULL	2017-12-29	Homeworks	Electrical	General Needs	Emergency (24 Hours)	Day to Day	NULL
+2000.0	4 Test Way, London	KT4 6JP	249309.0	remedy leak water is leaking through ceiling area in livingroom	2017-12-29	Miss Sally Testing	077957 981231	NULL	NULL	NULL	2017-12-29	Homeworks	Plumbing	General Needs	Emergency (24 Hours)	Day to Day	NULL
+3000.0	28 Test Road, London	KM2 7QT	249303.0	Tenant reports getting an electric shock from the socket serving the washing machine. EMERGENCY CALL	2017-12-29	Mr Test & Mrs Test	078951 681834	02071 609341	NULL	Test Road	2017-12-29	Homeworks	Electrical	General Needs	Emergency (24 Hours)	Day to Day	NULL
+
+###############################################################################
+# Test reading cells with inline formatting (#3729)
+
+query III
+SELECT * FROM 'test/data/xlsx/gdal/cells_with_inline_formatting.xlsx'
+----
+1.0	text 2	text 3
+2.0	text 4	text5
+
+###############################################################################
+# Test reading DateTime, and numeric precision issues (#2683)
+
+query I
+SELECT * FROM 'test/data/xlsx/gdal/datetime.xlsx'
+----
+2020-04-07 09:58:00
+2020-04-07 09:58:01
+2020-04-07 09:58:02
+2020-04-07 09:58:03
+2020-04-07 09:58:04
+2020-04-07 09:58:05
+2020-04-07 10:03:00
+2020-04-07 10:10:00
+2020-04-07 10:29:00
+2020-04-07 10:42:00
+
+###############################################################################
+# Test reading a XLSX file with XML element prefixes
+
+query II
+SELECT * FROM 'test/data/xlsx/gdal/with_xml_prefix.xlsx'
+----
+foo	bar
+
+query II
+SELECT * FROM read_xlsx('test/data/xlsx/gdal/with_xml_prefix.xlsx', header := false)
+----
+Col1	Col2
+foo	bar
+
+###############################################################################
+# Test reading a XLSX file with <row> without "r" attribute
 
 query II
 SELECT * FROM 'test/data/xlsx/gdal/row_without_r_attribute.xlsx'
 ----
 1	TEST123
-
 
 query II
 SELECT * FROM read_xlsx('test/data/xlsx/gdal/row_without_r_attribute.xlsx', header := false)

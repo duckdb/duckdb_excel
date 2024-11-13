@@ -20,6 +20,8 @@ namespace duckdb {
 static const auto WBOOK_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml";
 static const auto SHEET_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml";
 
+static constexpr auto DEFAULT_CELL_TYPE = XLSXCellType::INLINE_STRING;
+
 //-------------------------------------------------------------------
 // "[Content_Types].xml" Parser
 //-------------------------------------------------------------------
@@ -247,13 +249,9 @@ private:
 
 class XLSXStyleParser final : public XMLParser {
 public:
-	unordered_map<idx_t, LogicalType> format_map;
-	vector<LogicalType> style_formats;
-
-	XLSXStyleParser() {
-		style_formats.push_back(LogicalType::DOUBLE); // Default format (0)
-		style_formats.push_back(LogicalType::DOUBLE); // Default format (1)
-	}
+	unordered_map<idx_t, LogicalType> number_formats;
+	vector<LogicalType> cell_styles;
+	//vector<LogicalType> style_formats;
 
 protected:
 	void OnStartElement(const char *name, const char **atts) override;
@@ -312,14 +310,14 @@ void XLSXStyleParser::OnStartElement(const char *name, const char **atts) {
 		const auto has_time_part = StringContainsAny(format_ptr, "HH", "hh", "h", "H");
 
 		if (has_date_part && has_time_part) {
-			format_map.emplace(id, LogicalType::TIMESTAMP);
+			number_formats.emplace(id, LogicalType::TIMESTAMP);
 		} else if (has_date_part) {
-			format_map.emplace(id, LogicalType::DATE);
+			number_formats.emplace(id, LogicalType::DATE);
 		} else if (has_time_part) {
-			format_map.emplace(id, LogicalType::TIME);
+			number_formats.emplace(id, LogicalType::TIME);
 		} else {
 			// If we dont know how to handle the format, default to the numeric value.
-			format_map.emplace(id, LogicalType::DOUBLE); // TODO: Or double?
+			number_formats.emplace(id, LogicalType::DOUBLE); // TODO: Or double?
 		}
 
 	} break;
@@ -339,17 +337,17 @@ void XLSXStyleParser::OnStartElement(const char *name, const char **atts) {
 		if (id < 164) {
 			// Special cases
 			if (id >= 14 && id <= 17) {
-				style_formats.push_back(LogicalType::DATE);
+				cell_styles.push_back(LogicalType::DATE);
 			} else if (id >= 18 && id <= 21) {
-				style_formats.push_back(LogicalType::TIME);
+				cell_styles.push_back(LogicalType::TIME);
 			} else if (id == 22) {
-				style_formats.push_back(LogicalType::TIMESTAMP);
+				cell_styles.push_back(LogicalType::TIMESTAMP);
 			}
 		} else {
 			// Look up the ID in the format map
-			const auto it = format_map.find(id);
-			if (it != format_map.end()) {
-				style_formats.push_back(it->second);
+			const auto it = number_formats.find(id);
+			if (it != number_formats.end()) {
+				cell_styles.push_back(it->second);
 			}
 		}
 	} break;
@@ -500,10 +498,6 @@ private:
 		switch(state) {
 		case State::T:
 			if(MatchTag("t", name)) {
-				// Pass the string to the handler
-				OnString(data);
-				// Reset the buffer
-				data.clear();
 				// Disable text handling
 				EnableTextHandler(false);
 				state = State::SI;
@@ -512,6 +506,10 @@ private:
 		case State::SI:
 			if(MatchTag("si", name)) {
 				state = State::SST;
+				// Pass the string we've collected from the <t> tags to the handler
+				OnString(data);
+				// Reset the buffer
+				data.clear();
 			}
 			break;
 		case State::SST:
@@ -608,20 +606,6 @@ private:
 	vector<char> cell_data = {};
 	idx_t		 cell_style = 0;
 };
-
-/*
-void SheetParserBase::OnResume() {
-	if(state == State::EMPTY_ROW) {
-		while(cell_pos.row + 1 < target_row) {
-			cell_pos.row++;
-			OnBeginRow(cell_pos.row);
-			if(IsSuspended()) { return; }
-			OnEndRow(cell_pos.row);
-			if(IsSuspended()) { return; }
-		}
-	}
-}
-*/
 
 void SheetParserBase::OnText(const char *text, idx_t len) {
 	if(cell_data.size() + len > XLSX_MAX_CELL_SIZE * 2) {
@@ -854,11 +838,11 @@ void HeaderSniffer::OnCell(const XLSXCellPos &pos, XLSXCellType type, vector<cha
 		return;
 	}
 
-	// Now, add the cell to the data cells, but make sure to pad if needed.
+	// Now, add the cell to the data cells, but make sure to pad with empty varchars if needed.
 	if(last_col + 1 < pos.col) {
 		// Pad with empty cells
 		for(idx_t i = last_col + 1; i < pos.col; i++) {
-			column_cells.emplace_back(XLSXCellType::NUMBER, XLSXCellPos(pos.row, i), "", 0);
+			column_cells.emplace_back(DEFAULT_CELL_TYPE, XLSXCellPos(pos.row, i), "", 0);
 		}
 	}
 
@@ -875,10 +859,10 @@ void HeaderSniffer::OnEndRow(const idx_t row_idx) {
 		return;
 	}
 
-	// If there are columns missing at the end, pad with empty cells
+	// If there are columns missing at the end, pad with empty string cells
 	if(last_col + 1 < range.end.col) {
 		for(idx_t i = last_col + 1; i < range.end.col; i++) {
-			column_cells.emplace_back(XLSXCellType::NUMBER, XLSXCellPos(row_idx, i), "", 0);
+			column_cells.emplace_back(DEFAULT_CELL_TYPE, XLSXCellPos(row_idx, i), "", 0);
 		}
 	}
 
@@ -1182,17 +1166,6 @@ static XLSXMeta ParseXLSXFileMeta(ZipFileReader &reader) {
 	const auto wbrels = RelParser::ParseRelations(reader);
 	reader.CloseEntry();
 
-	// TODO: This might not actually be the primary sheet,
-	// TODO: we should still inspect it to see if this is valid xlsx
-	// we should maybe go by the order of the sheets in the workbook
-	/*
-	if(!ctypes.sheet_path.empty() && ctypes.sheet_path[0] == '/') {
-		result.primary_sheet = ctypes.sheet_path.substr(1);
-	} else {
-		result.primary_sheet = ctypes.sheet_path;
-	}
-	*/
-
 	// TODO: Detect if we have a shared string table
 
 	// Resolve the sheet names to the paths
@@ -1358,7 +1331,7 @@ static unique_ptr<FunctionData> Bind(ClientContext &context, TableFunctionBindIn
 	if(archive.TryOpenEntry("xl/styles.xml")) {
 		XLSXStyleParser style_parser;
 		style_parser.ParseAll(archive);
-		result->style_sheet = XLSXStyleSheet(std::move(style_parser.style_formats));
+		result->style_sheet = XLSXStyleSheet(std::move(style_parser.cell_styles));
 		archive.CloseEntry();
 	}
 
@@ -1394,13 +1367,13 @@ static unique_ptr<FunctionData> Bind(ClientContext &context, TableFunctionBindIn
 			// Otherwise, add a header row with the column names in the range
 			for(idx_t i = range.beg.col; i < range.end.col; i++) {
 				XLSXCellPos pos(range.beg.row, i);
-				header_cells.emplace_back(XLSXCellType::NUMBER, pos, pos.ToString(), 0);
+				header_cells.emplace_back(DEFAULT_CELL_TYPE, pos, pos.ToString(), 0);
 			}
 		}
 		// Else, we have a header row but no data rows
-		// Users seem to expect this to work, so we allow it by creating an empty dummy row of numbers
+		// Users seem to expect this to work, so we allow it by creating an empty dummy row of varchars
 		for(auto &cell : header_cells) {
-			column_cells.emplace_back(XLSXCellType::NUMBER, cell.cell, "", 0);
+			column_cells.emplace_back(DEFAULT_CELL_TYPE, cell.cell, "", 0);
 		}
 	}
 
