@@ -160,7 +160,7 @@ inline const char* XLSXCellRange::TryParse(const char* str) {
 
 enum class XLSXCellType : uint8_t { UNKNOWN, NUMBER, BOOLEAN, SHARED_STRING, INLINE_STRING, DATE, ERROR, FORMULA_STRING };
 
-static XLSXCellType ParseCellType(const char* ctype) {
+inline XLSXCellType ParseCellType(const char* ctype) {
 	// If no type is specified, assume it is a number
 	if(!ctype) {
 		return XLSXCellType::NUMBER;

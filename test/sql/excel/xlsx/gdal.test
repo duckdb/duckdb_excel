@@ -148,7 +148,7 @@ Test
 # Test that field names are picked up even if last field has no data
 
 query IIIIIIIIIIIIIIIIII
-SELECT * FROM read_xlsx('test/data/xlsx/gdal/test_empty_last_field.xlsx');
+SELECT * FROM read_xlsx('test/data/xlsx/gdal/test_empty_last_field.xlsx', empty_as_varchar := true);
 ----
 1000.0	1 Test Street, Bow, London	KC1 3ML	249200.0	No heating or hot water	2017-12-29	Miss N Tester	079036 789012	07901 231496	n.tester@gmail.com	Test Street	2017-12-29	TEST HEATING	NULL	General Needs	Emergency (24 Hours)	Planned Maintenance - CH/Water Hygiene	NULL
 2000.0	4 Test Way, London	KT4 6JP	249310.0	make safe electrical	2017-12-29	Miss Sally Testing	077957 981231	NULL	NULL	NULL	2017-12-29	Homeworks	Electrical	General Needs	Emergency (24 Hours)	Day to Day	NULL

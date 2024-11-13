@@ -1,9 +1,10 @@
 #include "duckdb/function/copy_function.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/main/extension_util.hpp"
-
 #include "xlsx/read_xlsx.hpp"
 #include "xlsx/zip_file.hpp"
+
+#include <duckdb/common/exception/conversion_exception.hpp>
 
 namespace duckdb {
 
@@ -280,7 +281,6 @@ static void Finalize(ClientContext &context, FunctionData &bind_data, GlobalFunc
 	// Finish writing the worksheet
 	state.writer.Write(WORKSHEET_XML_END);
 	state.writer.EndFile();
-
 	state.writer.Finalize();
 }
 
@@ -290,6 +290,110 @@ static void Finalize(ClientContext &context, FunctionData &bind_data, GlobalFunc
 CopyFunctionExecutionMode ExecutionMode(bool preserve_insertion_order, bool supports_batch_index) {
 	// TODO: Support parallel ordered batch writes
 	return CopyFunctionExecutionMode::REGULAR_COPY_TO_FILE;
+}
+
+//------------------------------------------------------------------------------
+// Copy From
+//------------------------------------------------------------------------------
+static void SetBooleanValue(named_parameter_map_t &params, const string &key, const vector<Value> &val) {
+	static constexpr auto error_msg = "'%s' option must be standalone or a BOOLEAN value";
+	if(val.size() > 1) {
+		throw BinderException(error_msg, key);
+	}
+	if(val.size() == 1) {
+		if(val.back().type() != LogicalType::BOOLEAN) {
+			throw BinderException(error_msg, key);
+		}
+		params[key] = val.back();
+	} else {
+		params[key] = Value::BOOLEAN(true);
+	}
+}
+
+static void SetVarcharValue(named_parameter_map_t &params, const string &key, const vector<Value> &val) {
+	static constexpr auto error_msg = "'%s' option must be a single VARCHAR value";
+	if(val.size() != 1) {
+		throw BinderException(error_msg, key);
+	}
+	if(val.back().type() != LogicalType::VARCHAR) {
+		throw BinderException(error_msg, key);
+	}
+	params[key] = val.back();
+}
+
+static void ParseCopyFromOptions(XLSXReadData &data, case_insensitive_map_t<vector<Value>> &options) {
+
+	// Just make it really easy for us, extract everything into a named parameter map
+	named_parameter_map_t named_parameters;
+
+	for(auto &kv : options) {
+		auto key = StringUtil::Lower(kv.first);
+		auto &val = kv.second;
+		if(key == "sheet") {
+			SetVarcharValue(named_parameters, key, val);
+		} else if (key == "header") {
+			SetBooleanValue(named_parameters, key, val);
+		} else if (key == "all_varchar") {
+			SetBooleanValue(named_parameters, key, val);
+		} else if (key == "ignore_errors") {
+			SetBooleanValue(named_parameters, key, val);
+		} else if(key == "range") {
+			SetVarcharValue(named_parameters, key, val);
+		} else if(key == "stop_at_empty") {
+			SetBooleanValue(named_parameters, key, val);
+		} else if (key == "empty_as_varchar") {
+			SetBooleanValue(named_parameters, key, val);
+		}
+	}
+
+	// Now just pass this to the table function data
+	ReadXLSX::ParseOptions(data.options, named_parameters);
+}
+
+static unique_ptr<FunctionData> CopyFromBind(ClientContext &context, CopyInfo &info,
+	vector<string> &expected_names, vector<LogicalType> &expected_types) {
+
+	auto result = make_uniq<XLSXReadData>();
+	result->file_path = info.file_path;
+
+	// TODO: Parse options
+	ParseCopyFromOptions(*result, info.options);
+
+	ZipFileReader archive(context, info.file_path);
+	ReadXLSX::ResolveSheet(result, archive);
+
+	// Column count mismatch!
+	if(expected_types.size() != result->return_types.size()) {
+		string extended_error = "Table schema: ";
+		for (idx_t col_idx = 0; col_idx < expected_types.size(); col_idx++) {
+			if (col_idx > 0) {
+				extended_error += ", ";
+			}
+			extended_error += expected_names[col_idx] + " " + expected_types[col_idx].ToString();
+		}
+		extended_error += "\nXLSX schema: ";
+		for (idx_t col_idx = 0; col_idx < result->return_types.size(); col_idx++) {
+			if (col_idx > 0) {
+				extended_error += ", ";
+			}
+			extended_error += result->column_names[col_idx] + " " + result->return_types[col_idx].ToString();
+		}
+		extended_error += "\n\nPossible solutions:";
+		extended_error += "\n* Manually specify which columns to insert using \"INSERT INTO tbl SELECT ... "
+						  "FROM read_xlsx(...)\"";
+		extended_error += "\n* Provide an explicit range option with the same width as the table schema using e.g.";
+		extended_error += "\"COPY tbl FROM ... (FORMAT 'xlsx', range 'A1:Z10')\"";
+
+		throw ConversionException(
+			"Failed to read file(s) \"%s\" - column count mismatch: expected %d columns but found %d\n%s",
+			result->file_path, expected_types.size(), result->return_types.size(), extended_error);
+	}
+
+	// Override the column names and types with the expected ones
+	result->return_types = expected_types;
+	result->column_names = expected_names;
+
+	return std::move(result);
 }
 
 //------------------------------------------------------------------------------
@@ -305,6 +409,9 @@ void WriteXLSX::Register(DatabaseInstance &db) {
 	info.copy_to_combine = Combine;
 	info.copy_to_finalize = Finalize;
 	info.execution_mode = ExecutionMode;
+
+	info.copy_from_bind = CopyFromBind;
+	info.copy_from_function = ReadXLSX::GetFunction();
 
 	info.extension = "xlsx";
 	ExtensionUtil::RegisterFunction(db, info);

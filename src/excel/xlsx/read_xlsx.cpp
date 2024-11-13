@@ -14,13 +14,12 @@
 #include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/parser/tableref/table_function_ref.hpp"
 #include "duckdb/storage/arena_allocator.hpp"
+#include "duckdb/main/query_result.hpp"
 
 namespace duckdb {
 
 static const auto WBOOK_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml";
 static const auto SHEET_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml";
-
-static constexpr auto DEFAULT_CELL_TYPE = XLSXCellType::INLINE_STRING;
 
 //-------------------------------------------------------------------
 // "[Content_Types].xml" Parser
@@ -251,7 +250,6 @@ class XLSXStyleParser final : public XMLParser {
 public:
 	unordered_map<idx_t, LogicalType> number_formats;
 	vector<LogicalType> cell_styles;
-	//vector<LogicalType> style_formats;
 
 protected:
 	void OnStartElement(const char *name, const char **atts) override;
@@ -796,12 +794,11 @@ void RangeSniffer::OnEndRow(const idx_t row_idx) {
 // The header sniffer is used to determine the header and the types
 // of the columns in the sheet (within the range)
 
-enum class XLSXHeaderMode : uint8_t { NEVER, MAYBE, FORCE };
-
 class HeaderSniffer final : public SheetParserBase {
 public:
-	HeaderSniffer(const XLSXCellRange &range_p, const XLSXHeaderMode header_mode_p, const bool absolute_range_p)
-		: range(range_p), header_mode(header_mode_p), absolute_range(absolute_range_p) {
+	HeaderSniffer(const XLSXCellRange &range_p, const XLSXHeaderMode header_mode_p, const bool absolute_range_p,
+		XLSXCellType default_cell_type_p)
+		: range(range_p), header_mode(header_mode_p), absolute_range(absolute_range_p), default_cell_type(default_cell_type_p) {
 	}
 
 	const XLSXCellRange &GetRange() const { return range; }
@@ -813,16 +810,17 @@ private:
 	void OnEndRow(idx_t row_idx) override;
 	void OnCell(const XLSXCellPos &pos, XLSXCellType type, vector<char> &data, idx_t style) override;
 private:
-	XLSXCellRange range;
-	XLSXHeaderMode header_mode;
-
-	bool first_row = true;
-	idx_t last_col = 0;
-
 	vector<XLSXCell> header_cells;
 	vector<XLSXCell> column_cells;
 
+	XLSXCellRange range;
+	XLSXHeaderMode header_mode;
+
+	idx_t last_col = 0;
+
+	bool first_row = true;
 	bool absolute_range;
+	XLSXCellType default_cell_type;
 };
 
 void HeaderSniffer::OnBeginRow(const idx_t row_idx) {
@@ -842,7 +840,7 @@ void HeaderSniffer::OnCell(const XLSXCellPos &pos, XLSXCellType type, vector<cha
 	if(last_col + 1 < pos.col) {
 		// Pad with empty cells
 		for(idx_t i = last_col + 1; i < pos.col; i++) {
-			column_cells.emplace_back(DEFAULT_CELL_TYPE, XLSXCellPos(pos.row, i), "", 0);
+			column_cells.emplace_back(default_cell_type, XLSXCellPos(pos.row, i), "", 0);
 		}
 	}
 
@@ -862,7 +860,7 @@ void HeaderSniffer::OnEndRow(const idx_t row_idx) {
 	// If there are columns missing at the end, pad with empty string cells
 	if(last_col + 1 < range.end.col) {
 		for(idx_t i = last_col + 1; i < range.end.col; i++) {
-			column_cells.emplace_back(DEFAULT_CELL_TYPE, XLSXCellPos(row_idx, i), "", 0);
+			column_cells.emplace_back(default_cell_type, XLSXCellPos(row_idx, i), "", 0);
 		}
 	}
 
@@ -907,7 +905,7 @@ void HeaderSniffer::OnEndRow(const idx_t row_idx) {
 		for(auto &cell : header_cells) {
 			cell.type = XLSXCellType::INLINE_STRING;
 			cell.style = 0;
-			if(absolute_range) {
+			if(!absolute_range) {
 				cell.data = cell.cell.ToString();
 			} else {
 				cell.data = cell.cell.GetColumnName();
@@ -984,7 +982,7 @@ private:
 	idx_t last_row;
 	idx_t curr_row;
 
-	bool stop_at_empty = true;
+	bool stop_at_empty = false;
 	bool is_row_empty = false;
 };
 
@@ -1137,15 +1135,10 @@ void SheetParser::OnEndRow(idx_t row_idx) {
 //-------------------------------------------------------------------
 // Meta
 //-------------------------------------------------------------------
+static void ParseXLSXFileMeta(const unique_ptr<XLSXReadData> &result, ZipFileReader &reader) {
 
-struct XLSXMeta {
-	// Map sheet names to paths in the workbook
-	unordered_map<string, string> sheets;
+	unordered_map<string, string> candidate_sheets;
 	string primary_sheet;
-};
-
-static XLSXMeta ParseXLSXFileMeta(ZipFileReader &reader) {
-	XLSXMeta result;
 
 	// Extract the content types to get the primary sheet
 	if(!reader.TryOpenEntry("[Content_Types].xml")) {
@@ -1184,23 +1177,39 @@ static XLSXMeta ParseXLSXFileMeta(ZipFileReader &reader) {
 
 			// Normalize everything to absolute paths
 			if(StringUtil::StartsWith(found->second, "/xl/")) {
-				result.sheets[sheet.first] = found->second.substr(1);
+				candidate_sheets[sheet.first] = found->second.substr(1);
 			} else {
-				result.sheets[sheet.first] = "xl/" + found->second;
+				candidate_sheets[sheet.first] = "xl/" + found->second;
 			}
 
 			// Set the first sheet we find as the primary sheet
-			if(result.primary_sheet.empty()) {
-				result.primary_sheet = sheet.first;
+			if(primary_sheet.empty()) {
+				primary_sheet = sheet.first;
 			}
 		}
 	}
 
-	if(result.sheets.empty()) {
+	if(candidate_sheets.empty()) {
 		throw BinderException("No sheets found in xlsx file (is the file corrupt?)");
 	}
 
-	return result;
+	// Default to the primary sheet if no option is given
+	auto &options = result->options;
+	if(options.sheet.empty()) {
+		options.sheet = primary_sheet;
+	}
+
+	const auto found = candidate_sheets.find(options.sheet);
+	if(found == candidate_sheets.end()) {
+		// Throw a helpful error message
+		vector<string> all_sheets;
+		for(auto &sheet : candidate_sheets) {
+			all_sheets.push_back(sheet.first);
+		}
+		StringUtil::CandidatesErrorMessage(all_sheets, options.sheet, "Did you mean: ");
+		throw BinderException("Sheet \"%s\" not found in xlsx file \"%s\"\n%s", result->file_path, options.sheet);
+	}
+	result->sheet_path = found->second;
 }
 
 
@@ -1241,77 +1250,38 @@ static void ResolveColumnNames(vector<XLSXCell> &header_cells, ZipFileReader &ar
 //-------------------------------------------------------------------
 // Bind
 //-------------------------------------------------------------------
-class XLSXFunctionData final : public TableFunctionData {
-public:
-	string	file_path;
-	string	sheet_path;
-	idx_t	sheet_fidx;
 
-	vector<LogicalType> return_types;
-	vector<XLSXCellType> source_types;
-
-	bool ignore_errors = false;
-	bool stop_at_empty = true;
-
-	// The range of the content in the sheet
-	XLSXCellRange content_range;
-
-	// Format styles
-	XLSXStyleSheet style_sheet;
-};
-
-static unique_ptr<FunctionData> Bind(ClientContext &context, TableFunctionBindInput &input,
-														  vector<LogicalType> &return_types, vector<string> &names) {
-	auto result = make_uniq<XLSXFunctionData>();
-
-	// Get the file name
-	const auto file_path = StringValue::Get(input.inputs[0]);
-
-	// Open the archive
-	ZipFileReader archive(context, file_path);
-
-	//const auto entries = archive.ListEntries();
-	const auto meta = ParseXLSXFileMeta(archive);
-
-	result->file_path = file_path;
+void ReadXLSX::ParseOptions(XLSXReadOptions &options, const named_parameter_map_t &input) {
 
 	// Check which sheet to use, default to the primary sheet
-	auto sheet_opt = input.named_parameters.find("sheet");
-	auto sheet_name = meta.primary_sheet;
-
-	if(sheet_opt != input.named_parameters.end()) {
+	const auto sheet_opt = input.find("sheet");
+	if(sheet_opt != input.end()) {
 		// We need to escape all user-supplied strings when searching for them in the XML
-		sheet_name = EscapeXMLString(StringValue::Get(sheet_opt->second));
+		options.sheet = EscapeXMLString(StringValue::Get(sheet_opt->second));
 	}
-	const auto found = meta.sheets.find(sheet_name);
-	if(found == meta.sheets.end()) {
-		throw BinderException("Sheet '%s' not found in xlsx file", sheet_name);
-	}
-	result->sheet_path = found->second;
 
 	// Get the header mode
-	auto header_mode_opt = input.named_parameters.find("header");
-	auto header_mode = XLSXHeaderMode::MAYBE;
-	if(header_mode_opt != input.named_parameters.end()) {
-		header_mode = BooleanValue::Get(header_mode_opt->second) ? XLSXHeaderMode::FORCE : XLSXHeaderMode::NEVER;
+	const auto header_mode_opt = input.find("header");
+	if(header_mode_opt != input.end()) {
+		options.header_mode = BooleanValue::Get(header_mode_opt->second)
+			? XLSXHeaderMode::FORCE
+			: XLSXHeaderMode::NEVER;
 	}
 
-	auto all_varchar_opt = input.named_parameters.find("all_varchar");
-	bool all_varchar = false;
-	if(all_varchar_opt != input.named_parameters.end()) {
-		all_varchar = BooleanValue::Get(all_varchar_opt->second);
+	const auto all_varchar_opt = input.find("all_varchar");
+	if(all_varchar_opt != input.end()) {
+		options.all_varchar = BooleanValue::Get(all_varchar_opt->second);
 	}
 
-	auto ignore_errors_opt = input.named_parameters.find("ignore_errors");
-	if(ignore_errors_opt != input.named_parameters.end()) {
-		result->ignore_errors = BooleanValue::Get(ignore_errors_opt->second);
+	const auto ignore_errors_opt = input.find("ignore_errors");
+	if(ignore_errors_opt != input.end()) {
+		options.ignore_errors = BooleanValue::Get(ignore_errors_opt->second);
 	}
 
-	auto range_opt = input.named_parameters.find("range");
-	XLSXCellRange range;
-	bool detect_range = true;
-	if(range_opt != input.named_parameters.end()) {
-		auto range_str = StringValue::Get(range_opt->second);
+	const auto range_opt = input.find("range");
+	if(range_opt != input.end()) {
+		const auto range_str = StringValue::Get(range_opt->second);
+		XLSXCellRange range;
 		if(!range.TryParse(range_str.c_str())) {
 			throw BinderException("Invalid range '%s' specified", range_str);
 		}
@@ -1323,10 +1293,26 @@ static unique_ptr<FunctionData> Bind(ClientContext &context, TableFunctionBindIn
 		range.end.col++;
 		range.end.row++;
 
-		detect_range = false;
-		result->stop_at_empty = false;
+		options.range = range;
+		options.stop_at_empty = false;
+		options.has_explicit_range = true;
 	}
 
+	const auto stop_at_empty_op = input.find("stop_at_empty");
+	if(stop_at_empty_op != input.end()) {
+		if(options.has_explicit_range) {
+			throw BinderException("Cannot specify both 'range' and 'stop_at_empty' options");
+		}
+		options.stop_at_empty = BooleanValue::Get(stop_at_empty_op->second);
+	}
+
+	const auto empty_as_varchar_opt = input.find("empty_as_varchar");
+	if(empty_as_varchar_opt != input.end()) {
+		options.default_cell_type = BooleanValue::Get(empty_as_varchar_opt->second) ? XLSXCellType::INLINE_STRING : XLSXCellType::NUMBER;
+	}
+}
+
+static void ParseStyleSheet(const unique_ptr<XLSXReadData> &result, ZipFileReader &archive) {
 	// Parse the styles (so we can handle dates)
 	if(archive.TryOpenEntry("xl/styles.xml")) {
 		XLSXStyleParser style_parser;
@@ -1334,46 +1320,50 @@ static unique_ptr<FunctionData> Bind(ClientContext &context, TableFunctionBindIn
 		result->style_sheet = XLSXStyleSheet(std::move(style_parser.cell_styles));
 		archive.CloseEntry();
 	}
+}
 
-	if(detect_range) {
-		if(!archive.TryOpenEntry(result->sheet_path)) {
-			throw BinderException("Sheet '%s' not found in xlsx file", result->sheet_path);
-		}
-		RangeSniffer range_sniffer;
-		range_sniffer.ParseAll(archive);
-		archive.CloseEntry();
-
-		range = range_sniffer.GetRange();
+static void SniffRange(const unique_ptr<XLSXReadData> &result, ZipFileReader &archive) {
+	if(!archive.TryOpenEntry(result->sheet_path)) {
+		throw BinderException("Sheet '%s' not found in xlsx file", result->sheet_path);
 	}
+	RangeSniffer range_sniffer;
+	range_sniffer.ParseAll(archive);
+	archive.CloseEntry();
+	result->options.range = range_sniffer.GetRange();
+}
+
+static void SniffHeader(const unique_ptr<XLSXReadData> &result, ZipFileReader &archive) {
+	auto &options = result->options;
 
 	if(!archive.TryOpenEntry(result->sheet_path)) {
 		throw BinderException("Sheet '%s' not found in xlsx file", result->sheet_path);
 	}
-	HeaderSniffer sniffer(range, header_mode, detect_range);
+	HeaderSniffer sniffer(result->options.range, result->options.header_mode, result->options.has_explicit_range,
+		result->options.default_cell_type);
 	sniffer.ParseAll(archive);
 	archive.CloseEntry();
 
 	// This is the range of actual data in the sheet (header not included)
-	result->content_range = sniffer.GetRange();
+	options.range = sniffer.GetRange();
 
 	auto &header_cells = sniffer.GetHeaderCells();
 	auto &column_cells = sniffer.GetColumnCells();
 
 	if(column_cells.empty()) {
 		if(header_cells.empty()) {
-			if(detect_range) {
+			if(!options.has_explicit_range) {
 				throw BinderException("No rows found in xlsx file");
 			}
 			// Otherwise, add a header row with the column names in the range
-			for(idx_t i = range.beg.col; i < range.end.col; i++) {
-				XLSXCellPos pos(range.beg.row, i);
-				header_cells.emplace_back(DEFAULT_CELL_TYPE, pos, pos.ToString(), 0);
+			for(idx_t i = options.range.beg.col; i < options.range.end.col; i++) {
+				XLSXCellPos pos(options.range.beg.row, i);
+				header_cells.emplace_back(result->options.default_cell_type, pos, pos.ToString(), 0);
 			}
 		}
 		// Else, we have a header row but no data rows
 		// Users seem to expect this to work, so we allow it by creating an empty dummy row of varchars
 		for(auto &cell : header_cells) {
-			column_cells.emplace_back(DEFAULT_CELL_TYPE, cell.cell, "", 0);
+			column_cells.emplace_back(result->options.default_cell_type, cell.cell, "", 0);
 		}
 	}
 
@@ -1382,17 +1372,51 @@ static unique_ptr<FunctionData> Bind(ClientContext &context, TableFunctionBindIn
 
 	// Set the return names
 	for(auto &cell : header_cells) {
-		names.push_back(cell.data);
+		result->column_names.push_back(cell.data);
 	}
 
 	// Convert excel types to duckdb types
 	for(auto &cell : column_cells) {
-		auto duckdb_type = cell.GetDuckDBType(all_varchar, result->style_sheet);
-
-		return_types.push_back(duckdb_type);
+		auto duckdb_type = cell.GetDuckDBType(result->options.all_varchar, result->style_sheet);
 		result->return_types.push_back(duckdb_type);
 		result->source_types.push_back(cell.type);
 	}
+}
+
+void ReadXLSX::ResolveSheet(const unique_ptr<XLSXReadData> &result, ZipFileReader &archive) {
+	// Parse the meta
+	ParseXLSXFileMeta(result, archive);
+	// Parse the style sheet
+	ParseStyleSheet(result, archive);
+	if(!result->options.has_explicit_range) {
+		// Sniff content range if required
+		SniffRange(result, archive);
+	}
+	// Sniff header
+	SniffHeader(result, archive);
+}
+
+static unique_ptr<FunctionData> Bind(ClientContext &context, TableFunctionBindInput &input,
+														  vector<LogicalType> &return_types, vector<string> &names) {
+	auto result = make_uniq<XLSXReadData>();
+	// Get the file name
+	const auto file_path = StringValue::Get(input.inputs[0]);
+	result->file_path = file_path;
+
+	// Open the archive
+	ZipFileReader archive(context, file_path);
+
+	// Parse the options
+	ReadXLSX::ParseOptions(result->options, input.named_parameters);
+
+	// Resolve the sheet
+	ReadXLSX::ResolveSheet(result, archive);
+
+	return_types = result->return_types;
+	names = result->column_names;
+
+	// Deduplicate column names
+	QueryResult::DeduplicateColumns(names);
 
 	return std::move(result);
 }
@@ -1424,8 +1448,9 @@ public:
 };
 
 static unique_ptr<GlobalTableFunctionState> InitGlobal(ClientContext &context, TableFunctionInitInput &input) {
-	auto &data = input.bind_data->Cast<XLSXFunctionData>();
-	auto state = make_uniq<XLSXGlobalState>(context, data.file_path, data.content_range, data.stop_at_empty);
+	auto &data = input.bind_data->Cast<XLSXReadData>();
+	auto &options = data.options;
+	auto state = make_uniq<XLSXGlobalState>(context, data.file_path, data.options.range, options.stop_at_empty);
 
 	// Check if there is a string table. If there is, extract it
 	if(state->archive.TryOpenEntry("xl/sharedStrings.xml")) {
@@ -1527,7 +1552,8 @@ static void TryCastTimestamp(XLSXGlobalState &state, bool ignore_errors, const i
 }
 
 static void Execute(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
-	auto &bind_data = data.bind_data->Cast<XLSXFunctionData>();
+	auto &bind_data = data.bind_data->Cast<XLSXReadData>();
+	auto &options = bind_data.options;
 	auto &gstate = data.global_state->Cast<XLSXGlobalState>();
 	const auto buffer = gstate.buffer.get();
 
@@ -1542,7 +1568,7 @@ static void Execute(ClientContext &context, TableFunctionInput &data, DataChunk 
 	while(chunk.size() != STANDARD_VECTOR_SIZE) {
 		if(status == XMLParseResult::SUSPENDED) {
 			if(parser.FoundSkippedRow()) {
-				if(bind_data.stop_at_empty) {
+				if(options.stop_at_empty) {
 					status = XMLParseResult::ABORTED;
 					break;
 				}
@@ -1571,7 +1597,7 @@ static void Execute(ClientContext &context, TableFunctionInput &data, DataChunk 
 	}
 
 	// Pad with empty rows if wanted (and needed)
-	if(!bind_data.stop_at_empty) {
+	if(options.has_explicit_range) {
 		parser.FillRows();
 	}
 
@@ -1590,14 +1616,14 @@ static void Execute(ClientContext &context, TableFunctionInput &data, DataChunk 
 			// If the types are the same, reference the column
 			target_col.Reference(source_col);
 		} else if(xlsx_type == XLSXCellType::NUMBER && target_type == LogicalTypeId::TIME) {
-			TryCastTime(gstate, bind_data.ignore_errors, col_idx, context, target_col);
+			TryCastTime(gstate, options.ignore_errors, col_idx, context, target_col);
 		} else if(xlsx_type == XLSXCellType::NUMBER && target_type == LogicalTypeId::DATE) {
-			TryCastDate(gstate, bind_data.ignore_errors, col_idx, context, target_col);
+			TryCastDate(gstate, options.ignore_errors, col_idx, context, target_col);
 		} else if(xlsx_type == XLSXCellType::NUMBER && target_type == LogicalTypeId::TIMESTAMP) {
-			TryCastTimestamp(gstate, bind_data.ignore_errors, col_idx, context, target_col);
+			TryCastTimestamp(gstate, options.ignore_errors, col_idx, context, target_col);
 		} else {
 			// Cast the from string to the target type
-			TryCast(gstate, bind_data.ignore_errors, col_idx, context, target_col);
+			TryCast(gstate, options.ignore_errors, col_idx, context, target_col);
 		}
 	}
 	output.SetCapacity(row_count);
@@ -1647,7 +1673,7 @@ static unique_ptr<TableRef> XLSXReplacementScan(ClientContext &context, Replacem
 //-------------------------------------------------------------------
 // Register
 //-------------------------------------------------------------------
-static TableFunction GetFunction() {
+TableFunction ReadXLSX::GetFunction() {
 
 	TableFunction read_xlsx("read_xlsx", {LogicalType::VARCHAR}, Execute, Bind);
 	read_xlsx.init_global = InitGlobal;
@@ -1659,6 +1685,8 @@ static TableFunction GetFunction() {
 	read_xlsx.named_parameters["ignore_errors"] = LogicalType::BOOLEAN;
 	read_xlsx.named_parameters["range"] = LogicalType::VARCHAR;
 	read_xlsx.named_parameters["sheet"] = LogicalType::VARCHAR;
+	read_xlsx.named_parameters["stop_at_empty"] = LogicalType::BOOLEAN;
+	read_xlsx.named_parameters["empty_as_varchar"] = LogicalType::BOOLEAN;
 
 	return read_xlsx;
 }
