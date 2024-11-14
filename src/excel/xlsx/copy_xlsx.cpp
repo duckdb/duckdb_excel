@@ -1,32 +1,103 @@
+#include "duckdb/common/exception/conversion_exception.hpp"
 #include "duckdb/function/copy_function.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/main/extension_util.hpp"
-#include "xlsx/read_xlsx.hpp"
-#include "xlsx/zip_file.hpp"
+#include "duckdb/planner/expression/bound_cast_expression.hpp"
+#include "duckdb/planner/expression/bound_reference_expression.hpp"
+#include "duckdb/planner/expression/bound_function_expression.hpp"
 
-#include <duckdb/common/exception/conversion_exception.hpp>
+#include "xlsx/read_xlsx.hpp"
+#include "xlsx/xlsx_writer.hpp"
+
+
+#include <duckdb/common/types/time.hpp>
 
 namespace duckdb {
 
 //------------------------------------------------------------------------------
+// Conversion Expressions
+//------------------------------------------------------------------------------
+static constexpr auto DAYS_BETWEEN_1900_AND_1970 = 25569;
+static constexpr auto SECONDS_PER_DAY = 86400;
+
+static void TimestampToExcelNumberFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+	const auto count = args.size();
+	UnaryExecutor::Execute<timestamp_t, double>(args.data[0], result, count, [&](timestamp_t timestamp) {
+		const auto epoch = Timestamp::GetEpochSeconds(timestamp);
+		// Convert epoch to days since 1900-01-01
+		const auto res = epoch / SECONDS_PER_DAY + DAYS_BETWEEN_1900_AND_1970;
+		return res;
+	});
+}
+
+static void TimeToExcelNumberFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+	const auto count = args.size();
+	UnaryExecutor::Execute<dtime_t, double>(args.data[0], result, count, [&](dtime_t time) {
+		// 1.0 is a full day;
+		return static_cast<double>(time.micros) / Interval::MICROS_PER_DAY;
+	});
+}
+
+static void DateToExcelNumberFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+	const auto count = args.size();
+	UnaryExecutor::Execute<date_t, double>(args.data[0], result, count, [&](date_t date) {
+		const auto epoch = static_cast<double>(Date::Epoch(date));
+		// Convert epoch to days since 1900-01-01
+		const auto res = epoch / SECONDS_PER_DAY + DAYS_BETWEEN_1900_AND_1970;
+		return res;
+	});
+}
+
+static unique_ptr<Expression> TimestampConversionExpr(idx_t col_idx) {
+	auto ref = make_uniq<BoundReferenceExpression>(LogicalType::TIMESTAMP, col_idx);
+	vector<unique_ptr<Expression>> children;
+	children.push_back(std::move(ref));
+
+	ScalarFunction sfunc("timestamp_to_excel_number", {LogicalType::TIMESTAMP}, LogicalType::DOUBLE, TimestampToExcelNumberFunction);
+	auto func = make_uniq<BoundFunctionExpression>(LogicalType::DOUBLE, sfunc, std::move(children), nullptr);
+
+	return BoundCastExpression::AddDefaultCastToType(std::move(func), LogicalType::VARCHAR);
+}
+
+static unique_ptr<Expression> TimeConversionExpr(idx_t col_idx) {
+	auto ref = make_uniq<BoundReferenceExpression>(LogicalType::TIME, col_idx);
+	vector<unique_ptr<Expression>> children;
+	children.push_back(std::move(ref));
+
+	ScalarFunction sfunc("time_to_excel_number", {LogicalType::TIME}, LogicalType::DOUBLE, TimeToExcelNumberFunction);
+	auto func = make_uniq<BoundFunctionExpression>(LogicalType::DOUBLE, sfunc, std::move(children), nullptr);
+
+	return BoundCastExpression::AddDefaultCastToType(std::move(func), LogicalType::VARCHAR);
+}
+
+static unique_ptr<Expression> DateConversionExpr(idx_t col_idx) {
+	auto ref = make_uniq<BoundReferenceExpression>(LogicalType::DATE, col_idx);
+	vector<unique_ptr<Expression>> children;
+	children.push_back(std::move(ref));
+
+	ScalarFunction sfunc("date_to_excel_number", {LogicalType::DATE}, LogicalType::DOUBLE, DateToExcelNumberFunction);
+	auto func = make_uniq<BoundFunctionExpression>(LogicalType::DOUBLE, sfunc, std::move(children), nullptr);
+
+	return BoundCastExpression::AddDefaultCastToType(std::move(func), LogicalType::VARCHAR);
+}
+
+//------------------------------------------------------------------------------
 // Bind
 //------------------------------------------------------------------------------
-struct WriteXLSXData final : public TableFunctionData {
+struct WriteXLSXData final : TableFunctionData {
 	vector<LogicalType> column_types;
 	vector<string> column_names;
 
 	string file_path;
 	string sheet_name;
+	idx_t sheet_row_limit;
 	bool header;
 };
 
-static unique_ptr<FunctionData> Bind(ClientContext &context, CopyFunctionBindInput &input,
-											 const vector<string> &names, const vector<LogicalType> &sql_types) {
-	auto data = make_uniq<WriteXLSXData>();
-
-	// Find the header options
-	const auto header_opt = input.info.options.find("header");
-	if(header_opt != input.info.options.end()) {
+static void ParseCopyToOptions(const unique_ptr<WriteXLSXData> &data, const case_insensitive_map_t<vector<Value>> &options) {
+		// Find the header options
+	const auto header_opt = options.find("header");
+	if(header_opt != options.end()) {
 		if(header_opt->second.size() != 1) {
 			throw BinderException("Header option must be a single boolean value");
 		}
@@ -36,21 +107,58 @@ static unique_ptr<FunctionData> Bind(ClientContext &context, CopyFunctionBindInp
 		{
 			throw BinderException("Header option must be a single boolean value");
 		}
+		if(bool_val.IsNull()) {
+			throw BinderException("Header option must be a single boolean value");
+		}
 		data->header = BooleanValue::Get(bool_val);
 	} else {
 		data->header = false;
 	}
 
 	// Find the sheet name option
-	const auto sheet_name_opt = input.info.options.find("sheet");
-	if(sheet_name_opt != input.info.options.end()) {
+	const auto sheet_name_opt = options.find("sheet");
+	if(sheet_name_opt != options.end()) {
 		if(sheet_name_opt->second.size() != 1) {
+			throw BinderException("Sheet name option must be a single string value");
+		}
+		if(sheet_name_opt->second.back().type() != LogicalType::VARCHAR) {
+			throw BinderException("Sheet name option must be a single string value");
+		}
+		if(sheet_name_opt->second.back().IsNull()) {
 			throw BinderException("Sheet name option must be a single string value");
 		}
 		data->sheet_name = StringValue::Get(sheet_name_opt->second.back());
 	} else {
 		data->sheet_name = "Sheet1";
 	}
+
+	// Find the row limit option
+	const auto sheet_row_limit_opt = options.find("sheet_row_limit");
+	if(sheet_row_limit_opt != options.end()) {
+		if(sheet_row_limit_opt->second.size() != 1) {
+			throw BinderException("Sheet row limit option must be a single integer value");
+		}
+		string error_msg;
+		Value int_val;
+		if(!sheet_row_limit_opt->second.back().DefaultTryCastAs(LogicalType::INTEGER, int_val, &error_msg))
+		{
+			throw BinderException("Sheet row limit option must be a single integer value");
+		}
+		if(int_val.IsNull()) {
+			throw BinderException("Sheet row limit option must be a single integer value");
+		}
+		data->sheet_row_limit = IntegerValue::Get(int_val);
+	} else {
+		data->sheet_row_limit = XLSX_MAX_CELL_ROWS;
+	}
+}
+
+static unique_ptr<FunctionData> Bind(ClientContext &context, CopyFunctionBindInput &input,
+											 const vector<string> &names, const vector<LogicalType> &sql_types) {
+	auto data = make_uniq<WriteXLSXData>();
+
+	// Parse the options
+	ParseCopyToOptions(data, input.info.options);
 
 	data->column_types = sql_types;
 	data->column_names = names;
@@ -62,78 +170,53 @@ static unique_ptr<FunctionData> Bind(ClientContext &context, CopyFunctionBindInp
 //------------------------------------------------------------------------------
 // Init Global
 //------------------------------------------------------------------------------
-static constexpr auto CONTENT_TYPES_XML = R"(<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="application/xml"/><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="jpeg" ContentType="image/jpg"/><Default Extension="png" ContentType="image/png"/><Default Extension="bmp" ContentType="image/bmp"/><Default Extension="gif" ContentType="image/gif"/><Default Extension="tif" ContentType="image/tif"/><Default Extension="pdf" ContentType="application/pdf"/><Default Extension="mov" ContentType="application/movie"/><Default Extension="vml" ContentType="application/vnd.openxmlformats-officedocument.vmlDrawing"/><Default Extension="xlsx" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"/><Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/><Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/><Override PartName="/xl/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>)";
-static constexpr auto WORKBOOK_XML_START = 	R"(<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:mx="http://schemas.microsoft.com/office/mac/excel/2008/main" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:mv="urn:schemas-microsoft-com:mac:vml" xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main" xmlns:x15="http://schemas.microsoft.com/office/spreadsheetml/2010/11/main" xmlns:x14ac="http://schemas.microsoft.com/office/spreadsheetml/2009/9/ac" xmlns:xm="http://schemas.microsoft.com/office/excel/2006/main"><workbookPr/><sheets>)";
-static constexpr auto WORKBOOK_XML_END = R"(</sheets><definedNames/><calcPr/></workbook>)";
-
-static constexpr auto WORKSHEET_XML_START = R"(<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
-           xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
-           xmlns:mx="http://schemas.microsoft.com/office/mac/excel/2008/main"
-           xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-           xmlns:mv="urn:schemas-microsoft-com:mac:vml"
-           xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main"
-           xmlns:x15="http://schemas.microsoft.com/office/spreadsheetml/2010/11/main"
-           xmlns:x14ac="http://schemas.microsoft.com/office/spreadsheetml/2009/9/ac"
-           xmlns:xm="http://schemas.microsoft.com/office/excel/2006/main">
-<sheetData>
-)";
-
-static constexpr auto WORKSHEET_XML_END = R"(</sheetData></worksheet>)";
-
-static constexpr auto WORKBOOK_REL_XML = R"(<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-		<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-		<Relationship Id="rId4" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
-	</Relationships>
-	)";
-
-/*
-
-<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" Target="theme/theme1.xml"/>
-		<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
-		<Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/>
- **/
-
 struct GlobalWriteXLSXData final : public GlobalFunctionData {
-	ZipFileWriter writer;
-	idx_t sheet_row_idx;
-	vector<string> sheet_column_names; // A1... Z1, AA1... ZZ1, etc.
-	vector<string> sheet_column_types; // e.g. "str", "n", etc.
-	idx_t column_count;
 
+	XLXSWriter writer;
 	DataChunk cast_chunk;
+	ExpressionExecutor executor;
+	vector<unique_ptr<Expression>> conversion_expressions;
 
 	GlobalWriteXLSXData(ClientContext &context, const string &file_path, const WriteXLSXData &data)
-		: writer(context, file_path), sheet_row_idx(1), column_count(data.column_names.size()) {
+		: writer(context, file_path, data.sheet_row_limit), executor(context) {
 
-		// Generate column names
-		sheet_column_names.resize(column_count);
-		for(idx_t col_idx = 0; col_idx < column_count; col_idx++) {
-			// Convert number to excel column name, e.g. 0 -> A, 1 -> B, 25 -> Z, 26 -> AA, etc.
-			string col_name;
-			idx_t col_num = col_idx + 1;
-			while(col_num > 0) {
-				col_name = (char)('A' + (col_num - 1) % 26) + col_name;
-				col_num = (col_num - 1) / 26;
+		// Initialize the expression executor
+		for(idx_t col_idx = 0; col_idx < data.column_types.size(); col_idx++) {
+			auto &col_type = data.column_types[col_idx];
+			auto ref_expr = make_uniq<BoundReferenceExpression>(col_type, col_idx);
+
+			// If the type is already varchar, just reference it
+			if(col_type == LogicalType::VARCHAR) {
+				conversion_expressions.push_back(std::move(ref_expr));
+				executor.AddExpression(*conversion_expressions.back());
+				continue;
 			}
-			sheet_column_names[col_idx] = col_name;
-		}
-
-		// Generate column types
-		sheet_column_types.resize(column_count);
-		for(idx_t col_idx = 0; col_idx < column_count; col_idx++) {
-			// Convert the logical type to the excel cell type identifier
-			const auto &type = data.column_types[col_idx];
-			if(type.IsNumeric()) {
-				sheet_column_types[col_idx] = "n";
-			} else {
-				sheet_column_types[col_idx] = "inlineStr";
+			if(col_type == LogicalType::TIMESTAMP) {
+				conversion_expressions.push_back(TimestampConversionExpr(col_idx));
+				executor.AddExpression(*conversion_expressions.back());
+				continue;
 			}
-		}
+			if(col_type == LogicalType::TIME) {
+				conversion_expressions.push_back(TimeConversionExpr(col_idx));
+				executor.AddExpression(*conversion_expressions.back());
+				continue;
+			}
+			if(col_type == LogicalType::DATE) {
+				conversion_expressions.push_back(DateConversionExpr(col_idx));
+				executor.AddExpression(*conversion_expressions.back());
+				continue;
+			}
 
+			// TODO: Do more advanced conversion here (like bools, timestamps, numbers to non-scientific notation, etc.)
+
+			// Othwerise, cast the column to a VARCHAR
+			auto cast_expr = BoundCastExpression::AddCastToType(context, std::move(ref_expr), LogicalType::VARCHAR);
+			conversion_expressions.push_back(std::move(cast_expr));
+			executor.AddExpression(*conversion_expressions.back());
+		}
 
 		// Initialize the cast chunk;
-		const vector<LogicalType> types(column_count, LogicalType::VARCHAR);
+		const vector<LogicalType> types(data.column_types.size(), LogicalType::VARCHAR);
 		cast_chunk.Initialize(BufferAllocator::Get(context), types);
 	}
 };
@@ -143,49 +226,19 @@ static unique_ptr<GlobalFunctionData> InitGlobal(ClientContext &context, Functio
 	auto &data = bind_data.Cast<WriteXLSXData>();
 	auto gstate = make_uniq<GlobalWriteXLSXData>(context, file_path, data);
 
-	// Create all the mandatory directories
 	auto &writer = gstate->writer;
-	writer.AddDirectory("_rels/");
-	writer.AddDirectory("xl/");
-	writer.AddDirectory("xl/_rels/");
-	writer.AddDirectory("xl/worksheets/");
-
-	writer.BeginFile("[Content_Types].xml");
-	writer.Write(CONTENT_TYPES_XML);
-	writer.EndFile();
-
-	writer.BeginFile("xl/workbook.xml");
-	writer.Write(WORKBOOK_XML_START);
-	writer.Write(R"(<sheet state="visible" name=")");
-	writer.WriteEscapedXML(data.sheet_name);
-	writer.Write(R"(" sheetId="1" r:id="rId4"/>)");
-	writer.Write(WORKBOOK_XML_END);
-	writer.EndFile();
-
-	writer.BeginFile("xl/_rels/workbook.xml.rels");
-	writer.Write(WORKBOOK_REL_XML);
-	writer.EndFile();
 
 	// Begin writing the worksheet
-	gstate->writer.BeginFile("xl/worksheets/sheet1.xml");
-	gstate->writer.Write(WORKSHEET_XML_START);
+	writer.BeginSheet(data.sheet_name, data.column_names, data.column_types);
 
 	// Write the header
 	if(data.header) {
-		const auto row_ref = std::to_string(gstate->sheet_row_idx);
-		gstate->writer.Write("<row r=\"" + row_ref + "\">");
-		for(idx_t col_idx = 0; col_idx < gstate->column_count; col_idx++) {
-			const auto col_ref = gstate->sheet_column_names[col_idx] + row_ref;
-			gstate->writer.Write("<c r=\"" + col_ref + "\" t=\"inlineStr\">");
-			gstate->writer.Write("<is><t>");
-			gstate->writer.WriteEscapedXML(data.column_names[col_idx]);
-			gstate->writer.Write("</t></is>");
-			gstate->writer.Write("</c>");
+		writer.BeginRow();
+		for(const auto &col_name : data.column_names) {
+			writer.WriteInlineStringCell(string_t(col_name));
 		}
-		gstate->writer.Write("</row>");
-		gstate->sheet_row_idx++;
+		writer.EndRow();
 	}
-
 	return std::move(gstate);
 }
 
@@ -211,55 +264,48 @@ static void Sink(ExecutionContext &context, FunctionData &bind_data, GlobalFunct
 	const auto row_count = input.size();
 	const auto col_count = input.data.size();
 
-	// First, setup
+	// First, cast the input columns to the target columns
+	state.executor.Execute(input, state.cast_chunk);
+
+	// Then, setup unified formats for the cast columns
 	vector<UnifiedVectorFormat> formats;
 	formats.resize(col_count);
 
 	for(idx_t col_idx = 0; col_idx < col_count; col_idx++) {
-		auto &source_col = input.data[col_idx];
-		auto &target_col = state.cast_chunk.data[col_idx];
-
-		// Cast all the input columns to the target column
-		VectorOperations::Cast(context.client, source_col, target_col, row_count);
-
-		// Setup the unified format for the cast columns
-		auto &format = formats[col_idx];
-		target_col.ToUnifiedFormat(row_count, format);
+		state.cast_chunk.data[col_idx].ToUnifiedFormat(row_count, formats[col_idx]);
 	}
 
 	// Now write the rows as xml
 	for(idx_t in_idx = 0; in_idx < row_count; in_idx++) {
-		const auto row_ref = std::to_string(state.sheet_row_idx);
-		writer.Write("<row r=\"" + row_ref + "\">");
+		writer.BeginRow();
 
 		for(idx_t col_idx = 0; col_idx < col_count; col_idx++) {
 			const auto &format = formats[col_idx];
 			const auto row_idx = format.sel->get_index(in_idx);
-
-			writer.Write("<c r=\"");
-			writer.Write(state.sheet_column_names[col_idx]);
-			writer.Write(row_ref);
-			writer.Write("\" t=\"");
-			writer.Write(state.sheet_column_types[col_idx]);
-			writer.Write("\"><v>");
-
-			if(format.validity.RowIsValid(row_idx)) {
-				const auto &val = UnifiedVectorFormat::GetData<string_t>(format)[row_idx];
-				if(data.column_types[col_idx].IsNumeric()) {
-					// Write numbers directly
-					writer.WriteEscapedXML(val.GetData(), val.GetSize());
-				} else {
-					// Write as inline string
-					writer.Write("<is><t>");
-					writer.WriteEscapedXML(val.GetData(), val.GetSize());
-					writer.Write("</t></is>");
-				}
+			if(!format.validity.RowIsValid(row_idx)) {
+				writer.WriteEmptyCell();
+				continue;
 			}
-			writer.Write("</v></c>");
+			const auto &val = UnifiedVectorFormat::GetData<string_t>(format)[row_idx];
+			const auto &type = data.column_types[col_idx];
+			if(type.IsNumeric()) {
+				// Write numbers directly
+				writer.WriteNumberCell(val);
+				continue;
+			}
+			if(type == LogicalType::DATE) {
+				// Arg. this is wrong. This mgiht be the correct date number format, but not the style id!!
+				// We need to write a style-sheet, stupid!
+				writer.WriteStyledNumberCell(val, 14);
+				continue;
+			}
+
+			// Else, write as inline string
+			writer.WriteInlineStringCell(val);
+
 		}
 
-		writer.Write("</row>");
-		state.sheet_row_idx++;
+		writer.EndRow();
 	}
 }
 
@@ -268,8 +314,6 @@ static void Sink(ExecutionContext &context, FunctionData &bind_data, GlobalFunct
 //------------------------------------------------------------------------------
 static void Combine(ExecutionContext &context, FunctionData &bind_data, GlobalFunctionData &gstate,
 							LocalFunctionData &lstate) {
-	//auto &data = bind_data.Cast<WriteXLSXData>();
-	//auto &state = gstate.Cast<GlobalWriteXLSXData>();
 }
 
 //------------------------------------------------------------------------------
@@ -279,9 +323,8 @@ static void Finalize(ClientContext &context, FunctionData &bind_data, GlobalFunc
 	auto &state = gstate.Cast<GlobalWriteXLSXData>();
 
 	// Finish writing the worksheet
-	state.writer.Write(WORKSHEET_XML_END);
-	state.writer.EndFile();
-	state.writer.Finalize();
+	state.writer.EndSheet();
+	state.writer.Finish();
 }
 
 //------------------------------------------------------------------------------
@@ -304,6 +347,9 @@ static void SetBooleanValue(named_parameter_map_t &params, const string &key, co
 		if(val.back().type() != LogicalType::BOOLEAN) {
 			throw BinderException(error_msg, key);
 		}
+		if(val.back().IsNull()) {
+			throw BinderException(error_msg, key);
+		}
 		params[key] = val.back();
 	} else {
 		params[key] = Value::BOOLEAN(true);
@@ -316,6 +362,9 @@ static void SetVarcharValue(named_parameter_map_t &params, const string &key, co
 		throw BinderException(error_msg, key);
 	}
 	if(val.back().type() != LogicalType::VARCHAR) {
+		throw BinderException(error_msg, key);
+	}
+	if(val.back().IsNull()) {
 		throw BinderException(error_msg, key);
 	}
 	params[key] = val.back();

@@ -254,20 +254,6 @@ idx_t ZipFileWriter::Write(const char *buffer, idx_t write_size) {
 	return bytes_written;
 }
 
-idx_t ZipFileWriter::WriteEscapedXML(const char *str) {
-	return WriteEscapedXML(str, strlen(str));
-}
-
-idx_t ZipFileWriter::WriteEscapedXML(const string &str) {
-	return WriteEscapedXML(str.c_str(), str.size());
-}
-
-idx_t ZipFileWriter::WriteEscapedXML(const char *buffer, idx_t write_size) {
-	escaped_buffer.clear();
-	EscapeXMLString(buffer, write_size, escaped_buffer);
-	return Write(escaped_buffer.data(), escaped_buffer.size());
-}
-
 void ZipFileWriter::EndFile() {
 	if (!is_entry_open) {
 		throw IOException("ZipWriter: Cannot close an entry that is not open");

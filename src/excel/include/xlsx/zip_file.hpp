@@ -23,10 +23,6 @@ public:
 	idx_t Write(const string &str);
 	idx_t Write(const char *str);
 
-	idx_t WriteEscapedXML(const char *str);
-	idx_t WriteEscapedXML(const string &str);
-	idx_t WriteEscapedXML(const char *buffer, idx_t write_size);
-
 	void EndFile();
 	void Finalize();
 
