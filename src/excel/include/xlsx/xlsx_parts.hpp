@@ -223,6 +223,15 @@ struct XLSXCell {
 		if(all_varchar) {
 			return LogicalType::VARCHAR;
 		}
+
+		// Check if we get a TRUE or FALSE value, if so, treat it as a boolean
+		if(StringUtil::CIEquals(data, "true")) {
+			return LogicalType::BOOLEAN;
+		}
+		if(StringUtil::CIEquals(data, "false")) {
+			return LogicalType::BOOLEAN;
+		}
+
 		switch(type) {
 		case XLSXCellType::NUMBER: {
 			// The logical type of a number is dependent on the style of the cell

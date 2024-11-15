@@ -3,14 +3,10 @@
 #include "duckdb/main/database.hpp"
 #include "duckdb/main/extension_util.hpp"
 #include "duckdb/planner/expression/bound_cast_expression.hpp"
-#include "duckdb/planner/expression/bound_reference_expression.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
-
+#include "duckdb/planner/expression/bound_reference_expression.hpp"
 #include "xlsx/read_xlsx.hpp"
 #include "xlsx/xlsx_writer.hpp"
-
-
-#include <duckdb/common/types/time.hpp>
 
 namespace duckdb {
 
@@ -183,7 +179,7 @@ struct GlobalWriteXLSXData final : public GlobalFunctionData {
 		// Initialize the expression executor
 		for(idx_t col_idx = 0; col_idx < data.column_types.size(); col_idx++) {
 			auto &col_type = data.column_types[col_idx];
-			auto ref_expr = make_uniq<BoundReferenceExpression>(col_type, col_idx);
+			auto ref_expr = make_uniq_base<Expression, BoundReferenceExpression>(col_type, col_idx);
 
 			// If the type is already varchar, just reference it
 			if(col_type == LogicalType::VARCHAR) {
@@ -206,8 +202,12 @@ struct GlobalWriteXLSXData final : public GlobalFunctionData {
 				executor.AddExpression(*conversion_expressions.back());
 				continue;
 			}
+			if(col_type == LogicalType::BOOLEAN) {
+				// Convert booleans to numbers first, then number to varchar
+				ref_expr = BoundCastExpression::AddCastToType(context, std::move(ref_expr), LogicalType::INTEGER);
+			}
 
-			// TODO: Do more advanced conversion here (like bools, timestamps, numbers to non-scientific notation, etc.)
+			// TODO: Do more advanced conversion here (like timestamptTZ, numbers to non-scientific notation, etc.)
 
 			// Othwerise, cast the column to a VARCHAR
 			auto cast_expr = BoundCastExpression::AddCastToType(context, std::move(ref_expr), LogicalType::VARCHAR);
@@ -286,6 +286,7 @@ static void Sink(ExecutionContext &context, FunctionData &bind_data, GlobalFunct
 				writer.WriteEmptyCell();
 				continue;
 			}
+
 			const auto &val = UnifiedVectorFormat::GetData<string_t>(format)[row_idx];
 			const auto &type = data.column_types[col_idx];
 			if(type.IsNumeric()) {
@@ -294,15 +295,24 @@ static void Sink(ExecutionContext &context, FunctionData &bind_data, GlobalFunct
 				continue;
 			}
 			if(type == LogicalType::DATE) {
-				// Arg. this is wrong. This mgiht be the correct date number format, but not the style id!!
-				// We need to write a style-sheet, stupid!
-				writer.WriteStyledNumberCell(val, 14);
+				writer.WriteDateCell(val);
+				continue;
+			}
+			if(type == LogicalType::TIME) {
+				writer.WriteTimeCell(val);
+				continue;
+			}
+			if(type == LogicalType::TIMESTAMP) {
+				writer.WriteTimestampCell(val);
+				continue;
+			}
+			if(type == LogicalType::BOOLEAN) {
+				writer.WriteBooleanCell(val);
 				continue;
 			}
 
 			// Else, write as inline string
 			writer.WriteInlineStringCell(val);
-
 		}
 
 		writer.EndRow();
