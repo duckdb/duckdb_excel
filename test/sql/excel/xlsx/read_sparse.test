@@ -1,11 +1,40 @@
 require excel
 
-query IIII
-SELECT sum(Col1), count(Col1), max(Col1), min(Col1) FROM 'test/data/xlsx/2x3000.xlsx'
+# We read a single cell far away in the sheet, its interpreted as the header
+query I
+SELECT * FROM read_xlsx('test/data/xlsx/sparse.xlsx');
 ----
-4498500	2999	2999	1
 
-query II
-SELECT Col1::VARCHAR, Col2::VARCHAR FROM read_xlsx('test/data/xlsx/2x3000.xlsx') OFFSET 2998 LIMIT 1
+query I
+DESCRIBE SELECT column_name, column_type FROM read_xlsx('test/data/xlsx/sparse.xlsx');
 ----
-2999.0	B
+duckdb	DOUBLE
+
+# But if we disable the header, we can read the cell
+query I
+DESCRIBE SELECT column_name, column_type FROM read_xlsx('test/data/xlsx/sparse.xlsx', header = false);
+----
+R465
+
+# Voila!
+query I
+SELECT * FROM read_xlsx('test/data/xlsx/sparse.xlsx', header = false);
+----
+duck
+
+# Now lets find the last cell too
+statement error
+SELECT * FROM read_xlsx('test/data/xlsx/sparse.xlsx', header = false, range = 'R:W1000');
+----
+Invalid Input Error: read_xlsx: Failed to parse cell 'W801': Could not convert string 'DB' to DOUBLE
+
+query I
+select * FROM read_xlsx('test/data/xlsx/sparse.xlsx', header = false, range = 'W801:W801');
+----
+DB
+
+# Lets also test some crazy ranges
+query I
+SELECT count(*) FROM read_xlsx('test/data/xlsx/sparse.xlsx', header = false, range = 'AA1:AB2000') WHERE BA IS NOT NULL;
+----
+0
