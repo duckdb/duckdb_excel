@@ -15,22 +15,25 @@ public:
 	void OnText(const char *text, idx_t len) override;
 	void OnStartElement(const char *name, const char **atts) override;
 	void OnEndElement(const char *name) override;
+
 protected:
 	virtual void OnBeginRow(idx_t row_idx) {};
 	virtual void OnEndRow(idx_t row_idx) {};
-	virtual void OnCell(const XLSXCellPos &pos, XLSXCellType type, vector<char> &data, idx_t style) {}
+	virtual void OnCell(const XLSXCellPos &pos, XLSXCellType type, vector<char> &data, idx_t style) {
+	}
+
 private:
 	enum class State : uint8_t { START, SHEETDATA, ROW, EMPTY_ROW, CELL, V, IS, T };
 	State state = State::START;
 
-	XLSXCellPos  cell_pos = {0, 0};
+	XLSXCellPos cell_pos = {0, 0};
 	XLSXCellType cell_type = XLSXCellType::NUMBER;
 	vector<char> cell_data = {};
-	idx_t		 cell_style = 0;
+	idx_t cell_style = 0;
 };
 
 inline void SheetParserBase::OnText(const char *text, idx_t len) {
-	if(cell_data.size() + len > XLSX_MAX_CELL_SIZE * 2) {
+	if (cell_data.size() + len > XLSX_MAX_CELL_SIZE * 2) {
 		// Something is obviously wrong, error out!
 		throw InvalidInputException("XLSX: Cell data too large (is the file corrupted?)");
 	}
@@ -38,23 +41,22 @@ inline void SheetParserBase::OnText(const char *text, idx_t len) {
 }
 
 inline void SheetParserBase::OnStartElement(const char *name, const char **atts) {
-	if(state == State::START && MatchTag("sheetData", name)) {
+	if (state == State::START && MatchTag("sheetData", name)) {
 		state = State::SHEETDATA;
-	}
-	else if(state == State::SHEETDATA && MatchTag("row", name)) {
+	} else if (state == State::SHEETDATA && MatchTag("row", name)) {
 		state = State::ROW;
 
 		// Reset the column position
 		cell_pos.col = 0;
 
 		const char *rref_ptr = nullptr;
-		for(idx_t i = 0; atts[i]; i += 2) {
-			if(strcmp(atts[i], "r") == 0) {
+		for (idx_t i = 0; atts[i]; i += 2) {
+			if (strcmp(atts[i], "r") == 0) {
 				rref_ptr = atts[i + 1];
 			}
 		}
 		// Default: Increment the row
-		if(!rref_ptr) {
+		if (!rref_ptr) {
 			cell_pos.row++;
 		} else {
 			// Else, jump to the row reference
@@ -63,19 +65,18 @@ inline void SheetParserBase::OnStartElement(const char *name, const char **atts)
 		}
 
 		OnBeginRow(cell_pos.row);
-	}
-	else if(state == State::ROW && MatchTag("c", name)) {
+	} else if (state == State::ROW && MatchTag("c", name)) {
 		state = State::CELL;
 
 		// Reset the cell data
 		cell_data.clear();
 
 		// We're entering a cell. Parse the attributes
-		const char* type_ptr = nullptr;
-		const char* cref_ptr = nullptr;
-		const char* style_ptr = nullptr;
-		for(idx_t i = 0; atts[i]; i += 2) {
-			if(strcmp(atts[i], "t") == 0) {
+		const char *type_ptr = nullptr;
+		const char *cref_ptr = nullptr;
+		const char *style_ptr = nullptr;
+		for (idx_t i = 0; atts[i]; i += 2) {
+			if (strcmp(atts[i], "t") == 0) {
 				type_ptr = atts[i + 1];
 			} else if (strcmp(atts[i], "r") == 0) {
 				cref_ptr = atts[i + 1];
@@ -89,52 +90,44 @@ inline void SheetParserBase::OnStartElement(const char *name, const char **atts)
 		// Default: NUMBER
 		cell_type = type_ptr ? ParseCellType(type_ptr) : XLSXCellType::NUMBER;
 		// Default: next cell
-		if(!cref_ptr) {
+		if (!cref_ptr) {
 			cell_pos.col++;
 		} else {
 			XLSXCellPos cref;
-			if(!cref.TryParse(cref_ptr)) {
+			if (!cref.TryParse(cref_ptr)) {
 				throw InvalidInputException("Invalid cell reference in sheet");
 			}
-			if(cref.row != cell_pos.row) {
+			if (cref.row != cell_pos.row) {
 				throw InvalidInputException("Cell reference does not match row reference in sheet");
 			}
 			cell_pos.col = cref.col;
 		}
-	}
-	else if(state == State::CELL && MatchTag("v", name)) {
+	} else if (state == State::CELL && MatchTag("v", name)) {
 		state = State::V;
 		EnableTextHandler(true);
-	}
-	else if(state == State::CELL && MatchTag("is", name)) {
+	} else if (state == State::CELL && MatchTag("is", name)) {
 		state = State::IS;
-	}
-	else if(state == State::IS && MatchTag("t", name)) {
+	} else if (state == State::IS && MatchTag("t", name)) {
 		state = State::T;
 		EnableTextHandler(true);
 	}
 }
 
 inline void SheetParserBase::OnEndElement(const char *name) {
-	if(state == State::SHEETDATA && MatchTag("sheetData", name)) {
+	if (state == State::SHEETDATA && MatchTag("sheetData", name)) {
 		Stop(false);
-	}
-	else if(state == State::ROW && MatchTag("row", name)) {
+	} else if (state == State::ROW && MatchTag("row", name)) {
 		OnEndRow(cell_pos.row);
 		state = State::SHEETDATA;
-	}
-	else if(state == State::CELL && MatchTag("c", name)) {
+	} else if (state == State::CELL && MatchTag("c", name)) {
 		OnCell(cell_pos, cell_type, cell_data, cell_style);
 		state = State::ROW;
-	}
-	else if(state == State::V && MatchTag("v", name)) {
+	} else if (state == State::V && MatchTag("v", name)) {
 		state = State::CELL;
 		EnableTextHandler(false);
-	}
-	else if(state == State::IS && MatchTag("is", name)) {
+	} else if (state == State::IS && MatchTag("is", name)) {
 		state = State::CELL;
-	}
-	else if(state == State::T && MatchTag("t", name)) {
+	} else if (state == State::T && MatchTag("t", name)) {
 		state = State::IS;
 		EnableTextHandler(false);
 	}
@@ -150,9 +143,11 @@ inline void SheetParserBase::OnEndElement(const char *name) {
 class RangeSniffer final : public SheetParserBase {
 public:
 	XLSXCellRange GetRange() const;
+
 private:
 	void OnEndRow(idx_t row_idx) override;
 	void OnCell(const XLSXCellPos &pos, XLSXCellType type, vector<char> &data, idx_t style) override;
+
 private:
 	// The range of the first consecutive non-empty row
 	idx_t beg_col = 0;
@@ -163,12 +158,12 @@ private:
 	idx_t min_col = 0;
 	idx_t max_col = 0;
 
-	enum class State : uint8_t { EMPTY, FOUND, ENDED};
+	enum class State : uint8_t { EMPTY, FOUND, ENDED };
 	State state = State::EMPTY;
 };
 
 inline XLSXCellRange RangeSniffer::GetRange() const {
-	if(beg_row == 0) {
+	if (beg_row == 0) {
 		// We didnt find any rows... return the whole sheet
 		return XLSXCellRange(1, 1, XLSX_MAX_CELL_ROWS, XLSX_MAX_CELL_COLS);
 	}
@@ -180,29 +175,29 @@ inline void RangeSniffer::OnCell(const XLSXCellPos &pos, XLSXCellType type, vect
 	min_col = std::min(min_col, pos.col);
 	max_col = std::max(max_col, pos.col);
 
-	switch(state) {
-		case State::EMPTY:
-			if(!data.empty()) {
-				state = State::FOUND;
-				beg_col = pos.col;
-				end_col = pos.col;
-			}
+	switch (state) {
+	case State::EMPTY:
+		if (!data.empty()) {
+			state = State::FOUND;
+			beg_col = pos.col;
+			end_col = pos.col;
+		}
 		break;
-		case State::FOUND:
-			if(data.empty()) {
-				state = State::ENDED;
-			} else {
-				end_col = pos.col;
-			}
+	case State::FOUND:
+		if (data.empty()) {
+			state = State::ENDED;
+		} else {
+			end_col = pos.col;
+		}
 		break;
-		case State::ENDED:
-			// We're done
-			break;
+	case State::ENDED:
+		// We're done
+		break;
 	}
 }
 
 inline void RangeSniffer::OnEndRow(const idx_t row_idx) {
-	if(state == State::FOUND || state == State::ENDED) {
+	if (state == State::FOUND || state == State::ENDED) {
 		// We found a row with data, between beg_col and end_col
 		// We can now use this as the range for the sheet
 		beg_row = row_idx;
@@ -224,18 +219,26 @@ inline void RangeSniffer::OnEndRow(const idx_t row_idx) {
 class HeaderSniffer final : public SheetParserBase {
 public:
 	HeaderSniffer(const XLSXCellRange &range_p, const XLSXHeaderMode header_mode_p, const bool absolute_range_p,
-		XLSXCellType default_cell_type_p)
-		: range(range_p), header_mode(header_mode_p), absolute_range(absolute_range_p), default_cell_type(default_cell_type_p) {
+	              XLSXCellType default_cell_type_p)
+	    : range(range_p), header_mode(header_mode_p), absolute_range(absolute_range_p),
+	      default_cell_type(default_cell_type_p) {
 	}
 
-	const XLSXCellRange &GetRange() const { return range; }
-	vector<XLSXCell> &GetColumnCells() { return column_cells; }
-	vector<XLSXCell> &GetHeaderCells() { return header_cells; }
+	const XLSXCellRange &GetRange() const {
+		return range;
+	}
+	vector<XLSXCell> &GetColumnCells() {
+		return column_cells;
+	}
+	vector<XLSXCell> &GetHeaderCells() {
+		return header_cells;
+	}
 
 private:
 	void OnBeginRow(idx_t row_idx) override;
 	void OnEndRow(idx_t row_idx) override;
 	void OnCell(const XLSXCellPos &pos, XLSXCellType type, vector<char> &data, idx_t style) override;
+
 private:
 	vector<XLSXCell> header_cells;
 	vector<XLSXCell> column_cells;
@@ -251,7 +254,7 @@ private:
 };
 
 inline void HeaderSniffer::OnBeginRow(const idx_t row_idx) {
-	if(!range.ContainsRow(row_idx)) {
+	if (!range.ContainsRow(row_idx)) {
 		return;
 	}
 	column_cells.clear();
@@ -259,14 +262,14 @@ inline void HeaderSniffer::OnBeginRow(const idx_t row_idx) {
 }
 
 inline void HeaderSniffer::OnCell(const XLSXCellPos &pos, XLSXCellType type, vector<char> &data, idx_t style) {
-	if(!range.ContainsCol(pos.col)) {
+	if (!range.ContainsCol(pos.col)) {
 		return;
 	}
 
 	// Now, add the cell to the data cells, but make sure to pad with empty varchars if needed.
-	if(last_col + 1 < pos.col) {
+	if (last_col + 1 < pos.col) {
 		// Pad with empty cells
-		for(idx_t i = last_col + 1; i < pos.col; i++) {
+		for (idx_t i = last_col + 1; i < pos.col; i++) {
 			column_cells.emplace_back(default_cell_type, XLSXCellPos(pos.row, i), "", 0);
 		}
 	}
@@ -276,23 +279,22 @@ inline void HeaderSniffer::OnCell(const XLSXCellPos &pos, XLSXCellType type, vec
 	last_col = pos.col;
 }
 
-
 inline void HeaderSniffer::OnEndRow(const idx_t row_idx) {
-	if(!range.ContainsRow(row_idx)) {
+	if (!range.ContainsRow(row_idx)) {
 		column_cells.clear();
 		last_col = range.beg.col - 1;
 		return;
 	}
 
 	// If there are columns missing at the end, pad with empty string cells
-	if(last_col + 1 < range.end.col) {
-		for(idx_t i = last_col + 1; i < range.end.col; i++) {
+	if (last_col + 1 < range.end.col) {
+		for (idx_t i = last_col + 1; i < range.end.col; i++) {
 			column_cells.emplace_back(default_cell_type, XLSXCellPos(row_idx, i), "", 0);
 		}
 	}
 
 	// Now we have all the cells in the row, we can inspect them
-	if(!first_row) {
+	if (!first_row) {
 		// This is the data row. We can stop here
 		Stop(false);
 		return;
@@ -300,39 +302,39 @@ inline void HeaderSniffer::OnEndRow(const idx_t row_idx) {
 
 	// Now its time to determine the header row
 	auto has_header = false;
-	switch(header_mode) {
-		case XLSXHeaderMode::NEVER:
-			// We're not looking for a header, so we're done
-			has_header = false;
-			break;
-		case XLSXHeaderMode::FORCE:
-			has_header = true;
-			break;
-		case XLSXHeaderMode::MAYBE: {
-			// We're looking for a header, but we're not sure if we found it yet
-			// We need to inspect the cells to determine if this is a header row or not
-			// We need all the rows to be non empty and strings
-			auto all_strings = true;
-			for(const auto &cell : column_cells) {
-				auto &type = cell.type;
-				const auto is_str = type == XLSXCellType::SHARED_STRING || type == XLSXCellType::INLINE_STRING;
-				const auto is_empty = cell.data.empty();
-				if(!is_str || is_empty) {
-					all_strings = false;
-					break;
-				}
+	switch (header_mode) {
+	case XLSXHeaderMode::NEVER:
+		// We're not looking for a header, so we're done
+		has_header = false;
+		break;
+	case XLSXHeaderMode::FORCE:
+		has_header = true;
+		break;
+	case XLSXHeaderMode::MAYBE: {
+		// We're looking for a header, but we're not sure if we found it yet
+		// We need to inspect the cells to determine if this is a header row or not
+		// We need all the rows to be non empty and strings
+		auto all_strings = true;
+		for (const auto &cell : column_cells) {
+			auto &type = cell.type;
+			const auto is_str = type == XLSXCellType::SHARED_STRING || type == XLSXCellType::INLINE_STRING;
+			const auto is_empty = cell.data.empty();
+			if (!is_str || is_empty) {
+				all_strings = false;
+				break;
 			}
-			has_header = all_strings;
 		}
+		has_header = all_strings;
+	}
 	}
 
-	if(!has_header) {
+	if (!has_header) {
 		// Generate a dummy header
 		header_cells = column_cells;
-		for(auto &cell : header_cells) {
+		for (auto &cell : header_cells) {
 			cell.type = XLSXCellType::INLINE_STRING;
 			cell.style = 0;
-			if(!absolute_range) {
+			if (!absolute_range) {
 				cell.data = cell.cell.ToString();
 			} else {
 				cell.data = cell.cell.GetColumnName();
@@ -354,7 +356,6 @@ inline void HeaderSniffer::OnEndRow(const idx_t row_idx) {
 	range.beg.row = row_idx + 1;
 }
 
-
 //-------------------------------------------------------------------
 // Sheet Parser
 //-------------------------------------------------------------------
@@ -362,8 +363,9 @@ inline void HeaderSniffer::OnEndRow(const idx_t row_idx) {
 //-------------------------------------------------------------------
 class SheetParser final : public SheetParserBase {
 public:
-	explicit SheetParser(ClientContext &context, const XLSXCellRange &range_p, const StringTable &table, bool stop_at_empty_p)
-		: string_table(table), range(range_p), stop_at_empty(stop_at_empty_p) {
+	explicit SheetParser(ClientContext &context, const XLSXCellRange &range_p, const StringTable &table,
+	                     bool stop_at_empty_p)
+	    : string_table(table), range(range_p), stop_at_empty(stop_at_empty_p) {
 
 		// Initialize the chunk
 		const vector<LogicalType> types(range.Width(), LogicalType::VARCHAR);
@@ -379,7 +381,9 @@ public:
 		last_col = range.beg.col - 1;
 	}
 
-	DataChunk& GetChunk() { return chunk; }
+	DataChunk &GetChunk() {
+		return chunk;
+	}
 	string GetCellName(idx_t chunk_row, idx_t chunk_col) const;
 
 	// Returns true if the chunk is full
@@ -392,6 +396,7 @@ protected:
 	void OnBeginRow(idx_t row_idx) override;
 	void OnEndRow(idx_t row_idx) override;
 	void OnCell(const XLSXCellPos &pos, XLSXCellType type, vector<char> &data, idx_t style) override;
+
 private:
 	// Shared String Table
 	const StringTable &string_table;
@@ -432,14 +437,14 @@ inline void SheetParser::SkipRows() {
 	while (last_row + 1 < curr_row) {
 		last_row++;
 
-		for(auto &col : chunk.data) {
+		for (auto &col : chunk.data) {
 			FlatVector::SetNull(col, out_index, true);
 		}
 		sheet_row_number[out_index] = last_row;
 		out_index++;
 		chunk.SetCardinality(out_index);
 
-		if(out_index == STANDARD_VECTOR_SIZE) {
+		if (out_index == STANDARD_VECTOR_SIZE) {
 			// We have filled up the chunk, yield!
 			out_index = 0;
 			return;
@@ -452,8 +457,8 @@ inline void SheetParser::FillRows() {
 	const auto local_remaining = STANDARD_VECTOR_SIZE - out_index;
 
 	const auto remaining = MinValue(total_remaining, local_remaining);
-	for(idx_t i = 0; i < remaining; i++) {
-		for(auto &col : chunk.data) {
+	for (idx_t i = 0; i < remaining; i++) {
+		for (auto &col : chunk.data) {
 			FlatVector::SetNull(col, out_index, true);
 		}
 		sheet_row_number[out_index] = last_row;
@@ -464,9 +469,8 @@ inline void SheetParser::FillRows() {
 	out_index = 0;
 }
 
-
 inline void SheetParser::OnBeginRow(idx_t row_idx) {
-	if(!range.ContainsRow(row_idx)) {
+	if (!range.ContainsRow(row_idx)) {
 		// not in range, skip
 		return;
 	}
@@ -477,20 +481,20 @@ inline void SheetParser::OnBeginRow(idx_t row_idx) {
 	curr_row = row_idx;
 
 	// Check if we need to pad empty rows
-	if(last_row + 1 < curr_row) {
+	if (last_row + 1 < curr_row) {
 		Stop(true);
 	}
 }
 
 inline void SheetParser::OnCell(const XLSXCellPos &pos, XLSXCellType type, vector<char> &data, idx_t style) {
-	if(!range.ContainsPos(pos)) {
+	if (!range.ContainsPos(pos)) {
 		// not in range, skip
 		return;
 	}
 
 	// If we jumped over some columns, pad with nulls
-	if(last_col + 1 < pos.col) {
-		for(idx_t i = last_col + 1; i < pos.col; i++) {
+	if (last_col + 1 < pos.col) {
+		for (idx_t i = last_col + 1; i < pos.col; i++) {
 			auto &vec = chunk.data[i - range.beg.col];
 			FlatVector::SetNull(vec, out_index, true);
 		}
@@ -502,15 +506,14 @@ inline void SheetParser::OnCell(const XLSXCellPos &pos, XLSXCellType type, vecto
 	// Push the cell data to our chunk
 	const auto ptr = FlatVector::GetData<string_t>(vec);
 
-	if(type == XLSXCellType::SHARED_STRING) {
+	if (type == XLSXCellType::SHARED_STRING) {
 		// Push a null to the buffer so that the string is null-terminated
 		data.push_back('\0');
 		// Now we can use strtol to get the shared string index
 		const auto ssi = std::strtol(data.data(), nullptr, 10);
 		// Look up the string in the string table
 		ptr[out_index] = string_table.Get(ssi);
-	}
-	else if(data.empty() && type != XLSXCellType::INLINE_STRING) {
+	} else if (data.empty() && type != XLSXCellType::INLINE_STRING) {
 		// If the cell is empty (and not a string), we wont be able to convert it
 		// so just null it immediately
 		FlatVector::SetNull(vec, out_index, true);
@@ -519,7 +522,7 @@ inline void SheetParser::OnCell(const XLSXCellPos &pos, XLSXCellType type, vecto
 		ptr[out_index] = StringVector::AddString(vec, data.data(), data.size());
 	}
 
-	if(!data.empty()) {
+	if (!data.empty()) {
 		is_row_empty = false;
 	}
 
@@ -527,21 +530,21 @@ inline void SheetParser::OnCell(const XLSXCellPos &pos, XLSXCellType type, vecto
 }
 
 inline void SheetParser::OnEndRow(idx_t row_idx) {
-	if(!range.ContainsRow(row_idx)) {
+	if (!range.ContainsRow(row_idx)) {
 		// not in range, skip
 		return;
 	}
 
 	last_row = row_idx;
 
-	if(stop_at_empty && is_row_empty) {
+	if (stop_at_empty && is_row_empty) {
 		Stop(false);
 		return;
 	}
 
 	// If we didnt write out all the columns, pad with nulls
-	if(last_col + 1 < range.end.col) {
-		for(idx_t i = last_col + 1; i < range.end.col; i++) {
+	if (last_col + 1 < range.end.col) {
+		for (idx_t i = last_col + 1; i < range.end.col; i++) {
 			auto &vec = chunk.data[i - range.beg.col];
 			FlatVector::SetNull(vec, out_index, true);
 		}
@@ -552,7 +555,7 @@ inline void SheetParser::OnEndRow(idx_t row_idx) {
 
 	out_index++;
 	chunk.SetCardinality(out_index);
-	if(out_index == STANDARD_VECTOR_SIZE) {
+	if (out_index == STANDARD_VECTOR_SIZE) {
 		// We have filled up the chunk, yield!
 		out_index = 0;
 		Stop(true);

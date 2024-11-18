@@ -7,7 +7,6 @@
 
 namespace duckdb {
 
-
 //-------------------------------------------------------------------
 // XML Parser
 //-------------------------------------------------------------------
@@ -22,25 +21,31 @@ class XMLParser {
 public:
 	XMLParser();
 	virtual ~XMLParser();
-	XMLParseResult Parse(const char* buffer, idx_t len, bool final);
+	XMLParseResult Parse(const char *buffer, idx_t len, bool final);
 	XMLParseResult Resume();
 	void ParseAll(ZipFileReader &stream, idx_t buffer_size = 2048);
+
 protected:
 	void EnableTextHandler(bool enable);
 	void Stop(bool resumable);
-	bool IsSuspended() const { return state == XMLParseResult::SUSPENDED; }
+	bool IsSuspended() const {
+		return state == XMLParseResult::SUSPENDED;
+	}
 
-	virtual void OnResume() { }
-	virtual void OnText(const char *text, idx_t len) { }
-	virtual void OnStartElement(const char* name, const char** atts) = 0;
-	virtual void OnEndElement(const char* name) = 0;
+	virtual void OnResume() {
+	}
+	virtual void OnText(const char *text, idx_t len) {
+	}
+	virtual void OnStartElement(const char *name, const char **atts) = 0;
+	virtual void OnEndElement(const char *name) = 0;
 
-	static bool MatchTag(const char* tag, const char* name, bool strip_prefix = true);
+	static bool MatchTag(const char *tag, const char *name, bool strip_prefix = true);
+
 private:
 	XML_Parser parser;
 
 	// enum class ParseState { OK, PAUSED, DONE};
-	//ParseState state;
+	// ParseState state;
 	XMLParseResult state = XMLParseResult::OK;
 	bool in_parser = false;
 };
@@ -50,12 +55,12 @@ inline XMLParser::XMLParser() : parser(XML_ParserCreate(nullptr)) {
 	XML_SetUserData(parser, this);
 
 	XML_SetStartElementHandler(parser, [](void *self_ptr, const XML_Char *name, const XML_Char **atts) {
-		auto &self = *static_cast<XMLParser*>(self_ptr);
+		auto &self = *static_cast<XMLParser *>(self_ptr);
 		self.OnStartElement(name, atts);
 	});
 
 	XML_SetEndElementHandler(parser, [](void *self_ptr, const XML_Char *name) {
-		auto &self = *static_cast<XMLParser*>(self_ptr);
+		auto &self = *static_cast<XMLParser *>(self_ptr);
 		self.OnEndElement(name);
 	});
 }
@@ -65,7 +70,7 @@ inline XMLParser::~XMLParser() {
 }
 
 inline XMLParseResult XMLParser::Parse(const char *buffer, const idx_t len, const bool final) {
-	if(state == XMLParseResult::ABORTED) {
+	if (state == XMLParseResult::ABORTED) {
 		return state;
 	}
 	D_ASSERT(state == XMLParseResult::OK);
@@ -74,10 +79,10 @@ inline XMLParseResult XMLParser::Parse(const char *buffer, const idx_t len, cons
 	const auto status = XML_Parse(parser, buffer, UnsafeNumericCast<int>(len), final);
 	in_parser = false;
 
-	switch(status) {
+	switch (status) {
 	case XML_STATUS_ERROR:
 		state = XMLParseResult::ABORTED;
-		if(XML_GetErrorCode(parser) != XML_ERROR_ABORTED) {
+		if (XML_GetErrorCode(parser) != XML_ERROR_ABORTED) {
 			const auto row_num = XML_GetCurrentLineNumber(parser);
 			const auto col_num = XML_GetCurrentColumnNumber(parser);
 			const auto err_str = XML_ErrorString(XML_GetErrorCode(parser));
@@ -97,7 +102,7 @@ inline XMLParseResult XMLParser::Parse(const char *buffer, const idx_t len, cons
 }
 
 inline XMLParseResult XMLParser::Resume() {
-	if(state == XMLParseResult::ABORTED) {
+	if (state == XMLParseResult::ABORTED) {
 		return state;
 	}
 
@@ -106,7 +111,7 @@ inline XMLParseResult XMLParser::Resume() {
 
 	// OnResume might call Pause() or Stop(), so we need to check if we should yield again
 	OnResume();
-	if(state != XMLParseResult::OK) {
+	if (state != XMLParseResult::OK) {
 		return state;
 	}
 
@@ -114,10 +119,10 @@ inline XMLParseResult XMLParser::Resume() {
 	const auto status = XML_ResumeParser(parser);
 	in_parser = false;
 
-	switch(status) {
+	switch (status) {
 	case XML_STATUS_ERROR:
 		state = XMLParseResult::ABORTED;
-		if(XML_GetErrorCode(parser) != XML_ERROR_ABORTED) {
+		if (XML_GetErrorCode(parser) != XML_ERROR_ABORTED) {
 			const auto row_num = XML_GetCurrentLineNumber(parser);
 			const auto col_num = XML_GetCurrentColumnNumber(parser);
 			const auto err_str = XML_ErrorString(XML_GetErrorCode(parser));
@@ -137,9 +142,9 @@ inline XMLParseResult XMLParser::Resume() {
 }
 
 inline void XMLParser::EnableTextHandler(const bool enable) {
-	if(enable) {
+	if (enable) {
 		XML_SetCharacterDataHandler(parser, [](void *self_ptr, const XML_Char *text, int len) {
-			auto &self = *static_cast<XMLParser*>(self_ptr);
+			auto &self = *static_cast<XMLParser *>(self_ptr);
 			self.OnText(text, len);
 		});
 	} else {
@@ -149,7 +154,7 @@ inline void XMLParser::EnableTextHandler(const bool enable) {
 
 inline void XMLParser::Stop(bool resumable) {
 	state = resumable ? XMLParseResult::SUSPENDED : XMLParseResult::ABORTED;
-	if(in_parser) {
+	if (in_parser) {
 		XML_StopParser(parser, resumable);
 	}
 }
@@ -182,5 +187,4 @@ inline bool XMLParser::MatchTag(const char *tag, const char *name, bool strip_pr
 	return strcmp(tag, name) == 0;
 }
 
-
-}
+} // namespace duckdb

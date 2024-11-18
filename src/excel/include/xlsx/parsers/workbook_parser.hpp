@@ -14,63 +14,76 @@ public:
 		parser.ParseAll(stream);
 		return std::move(parser.sheets);
 	}
+
 private:
 	void OnStartElement(const char *name, const char **atts) override;
 	void OnEndElement(const char *name) override;
+
 private:
-	enum class State { START, WORKBOOK, SHEETS, SHEET, };
+	enum class State {
+		START,
+		WORKBOOK,
+		SHEETS,
+		SHEET,
+	};
 	State state = State::START;
 	vector<pair<string, string>> sheets;
 };
 
 inline void WorkBookParser::OnStartElement(const char *name, const char **atts) {
-	switch(state) {
+	switch (state) {
 	case State::START:
-		if(MatchTag("workbook", name)) {
+		if (MatchTag("workbook", name)) {
 			state = State::WORKBOOK;
-		} break;
+		}
+		break;
 	case State::WORKBOOK:
-		if(MatchTag("sheets", name)) {
+		if (MatchTag("sheets", name)) {
 			state = State::SHEETS;
-		} break;
+		}
+		break;
 	case State::SHEETS:
-		if(MatchTag("sheet", name)) {
+		if (MatchTag("sheet", name)) {
 			state = State::SHEET;
 			// Now extract attributes
 			const char *sheet_name = nullptr;
 			const char *sheet_ridx = nullptr;
-			for(idx_t i = 0; atts[i]; i += 2) {
-				if(strcmp(atts[i], "name") == 0) {
+			for (idx_t i = 0; atts[i]; i += 2) {
+				if (strcmp(atts[i], "name") == 0) {
 					sheet_name = atts[i + 1];
-				} else if(strcmp(atts[i], "r:id") == 0) {
+				} else if (strcmp(atts[i], "r:id") == 0) {
 					sheet_ridx = atts[i + 1];
 				}
 			}
-			if(sheet_name && sheet_ridx) {
+			if (sheet_name && sheet_ridx) {
 				sheets.emplace_back(sheet_name, sheet_ridx);
 			} else {
 				throw InvalidInputException("Invalid sheet entry in workbook.xml");
 			}
-		} break;
+		}
+		break;
 	default:
 		break;
 	}
 }
 
 inline void WorkBookParser::OnEndElement(const char *name) {
-	switch(state) {
+	switch (state) {
 	case State::SHEET:
-		if(MatchTag("sheet", name)) {
+		if (MatchTag("sheet", name)) {
 			state = State::SHEETS;
-		} break;
+		}
+		break;
 	case State::SHEETS:
-		if(MatchTag("sheets", name)) {
+		if (MatchTag("sheets", name)) {
 			state = State::WORKBOOK;
-		} break;
+		}
+		break;
 	case State::WORKBOOK:
-		if(MatchTag("workbook", name)) {
+		if (MatchTag("workbook", name)) {
 			Stop(false);
-		} break;
+		}
+		break;
 	default:
 		break;
 	}

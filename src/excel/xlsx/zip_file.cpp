@@ -185,7 +185,7 @@ ZipFileWriter::ZipFileWriter(ClientContext &context, const string &file_name) {
 	duckdb_stream.handle = nullptr;
 
 	if (mz_stream_open(stream, file_name.c_str(), MZ_OPEN_MODE_CREATE | MZ_OPEN_MODE_WRITE) != MZ_OK) {
-		if(duckdb_stream.last_error.empty()) {
+		if (duckdb_stream.last_error.empty()) {
 			throw IOException("Failed to open file for writing");
 		} else {
 			throw IOException(duckdb_stream.last_error);
@@ -193,7 +193,7 @@ ZipFileWriter::ZipFileWriter(ClientContext &context, const string &file_name) {
 	}
 
 	if (mz_zip_writer_open(handle, stream, 0) != MZ_OK) {
-		if(duckdb_stream.last_error.empty()) {
+		if (duckdb_stream.last_error.empty()) {
 			throw IOException("Failed to open zip for writing");
 		} else {
 			throw IOException(duckdb_stream.last_error);
@@ -291,7 +291,7 @@ ZipFileReader::ZipFileReader(ClientContext &context, const string &file_name) {
 	duckdb_stream.handle = nullptr;
 
 	if (mz_stream_open(stream, file_name.c_str(), MZ_OPEN_MODE_READ) != MZ_OK) {
-		if(duckdb_stream.last_error.empty()) {
+		if (duckdb_stream.last_error.empty()) {
 			throw IOException("Failed to open file for reading");
 		} else {
 			throw IOException(duckdb_stream.last_error);
@@ -299,7 +299,7 @@ ZipFileReader::ZipFileReader(ClientContext &context, const string &file_name) {
 	}
 
 	if (mz_zip_reader_open(handle, stream) != MZ_OK) {
-		if(duckdb_stream.last_error.empty()) {
+		if (duckdb_stream.last_error.empty()) {
 			throw IOException("Failed to open zip for reading");
 		} else {
 			throw IOException(duckdb_stream.last_error);

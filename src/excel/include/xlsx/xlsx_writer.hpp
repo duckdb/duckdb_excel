@@ -7,11 +7,13 @@ namespace duckdb {
 
 class XLXSWriter {
 public:
-	void BeginSheet(const string &sheet_name, const vector<string> &sql_column_names, const vector<LogicalType> &sql_column_types);
+	void BeginSheet(const string &sheet_name, const vector<string> &sql_column_names,
+	                const vector<LogicalType> &sql_column_types);
 	void EndSheet();
 
-	explicit XLXSWriter(ClientContext &context, const string &file_name, idx_t sheet_row_limit_p) :
-		stream(context, file_name), sheet_row_limit(sheet_row_limit_p) { }
+	explicit XLXSWriter(ClientContext &context, const string &file_name, idx_t sheet_row_limit_p)
+	    : stream(context, file_name), sheet_row_limit(sheet_row_limit_p) {
+	}
 
 	void WriteNumberCell(const string_t &value);
 	void WriteInlineStringCell(const string_t &value);
@@ -19,11 +21,13 @@ public:
 	void WriteDateCell(const string_t &value);
 	void WriteTimeCell(const string_t &value);
 	void WriteTimestampCell(const string_t &value);
+	void WriteTimestampCellNoMilliseconds(const string_t &value);
 	void WriteEmptyCell();
 	void BeginRow();
 	void EndRow();
 
 	void Finish();
+
 private:
 	idx_t WriteEscapedXML(const char *str);
 	idx_t WriteEscapedXML(const string &str);
@@ -61,9 +65,10 @@ private:
 	vector<char> escaped_buffer;
 };
 
-inline void XLXSWriter::BeginSheet(const string &sheet_name, const vector<string> &sql_column_names, const vector<LogicalType> &sql_column_types) {
+inline void XLXSWriter::BeginSheet(const string &sheet_name, const vector<string> &sql_column_names,
+                                   const vector<LogicalType> &sql_column_types) {
 
-	if(written_sheets.empty()) {
+	if (written_sheets.empty()) {
 		// We need to create the directory for sheets
 		stream.AddDirectory("xl/");
 		stream.AddDirectory("xl/worksheets/");
@@ -81,11 +86,11 @@ inline void XLXSWriter::BeginSheet(const string &sheet_name, const vector<string
 
 	// Generate sheet column names
 	active_sheet.sheet_column_names.resize(column_count);
-	for(idx_t col_idx = 0; col_idx < column_count; col_idx++) {
+	for (idx_t col_idx = 0; col_idx < column_count; col_idx++) {
 		// Convert number to excel column name, e.g. 0 -> A, 1 -> B, 25 -> Z, 26 -> AA, etc.
 		string col_name;
 		idx_t col_num = col_idx + 1;
-		while(col_num > 0) {
+		while (col_num > 0) {
 			col_name = static_cast<char>('A' + (col_num - 1) % 26) + col_name;
 			col_num = (col_num - 1) / 26;
 		}
@@ -94,10 +99,10 @@ inline void XLXSWriter::BeginSheet(const string &sheet_name, const vector<string
 
 	// Generate sheet column types
 	active_sheet.sheet_column_types.resize(column_count);
-	for(idx_t col_idx = 0; col_idx < column_count; col_idx++) {
+	for (idx_t col_idx = 0; col_idx < column_count; col_idx++) {
 		// Convert the logical type to the excel cell type identifier
 		const auto &type = sql_column_types[col_idx];
-		if(type.IsNumeric()) {
+		if (type.IsNumeric()) {
 			active_sheet.sheet_column_types[col_idx] = "n";
 		} else {
 			active_sheet.sheet_column_types[col_idx] = "inlineStr";
@@ -124,7 +129,6 @@ inline void XLXSWriter::BeginSheet(const string &sheet_name, const vector<string
 inline void XLXSWriter::EndSheet() {
 	D_ASSERT(has_active_sheet);
 	has_active_sheet = false;
-
 
 	static constexpr auto WORKSHEET_XML_END = R"(</sheetData></worksheet>)";
 	stream.Write(WORKSHEET_XML_END);
@@ -172,7 +176,7 @@ inline void XLXSWriter::WriteDateCell(const string_t &value) {
 }
 
 inline void XLXSWriter::WriteTimeCell(const string_t &value) {
-	stream.Write("<c r=\"" + active_sheet.sheet_column_names[col_idx] + row_str + "\" t=\"n\" s=\"2\"><v>");
+	stream.Write("<c r=\"" + active_sheet.sheet_column_names[col_idx] + row_str + "\" t=\"n\" s=\"3\"><v>");
 	stream.Write(value.GetData(), value.GetSize());
 	stream.Write("</v></c>");
 
@@ -180,7 +184,15 @@ inline void XLXSWriter::WriteTimeCell(const string_t &value) {
 }
 
 inline void XLXSWriter::WriteTimestampCell(const string_t &value) {
-	stream.Write("<c r=\"" + active_sheet.sheet_column_names[col_idx] + row_str + "\" t=\"n\" s=\"3\"><v>");
+	stream.Write("<c r=\"" + active_sheet.sheet_column_names[col_idx] + row_str + "\" t=\"n\" s=\"4\"><v>");
+	stream.Write(value.GetData(), value.GetSize());
+	stream.Write("</v></c>");
+
+	col_idx++;
+}
+
+inline void XLXSWriter::WriteTimestampCellNoMilliseconds(const string_t &value) {
+	stream.Write("<c r=\"" + active_sheet.sheet_column_names[col_idx] + row_str + "\" t=\"n\" s=\"2\"><v>");
 	stream.Write(value.GetData(), value.GetSize());
 	stream.Write("</v></c>");
 
@@ -202,7 +214,7 @@ inline void XLXSWriter::EndRow() {
 	row_idx++;
 	row_str = std::to_string(row_idx + 1);
 
-	if(row_idx > sheet_row_limit) {
+	if (row_idx > sheet_row_limit) {
 		throw InvalidInputException("XLSX: Sheet row limit of '%s' rows exceeded!", sheet_row_limit);
 	}
 }
@@ -219,7 +231,6 @@ inline void XLXSWriter::Finish() {
 	// Done!
 	stream.Finalize();
 }
-
 
 inline idx_t XLXSWriter::WriteEscapedXML(const char *str) {
 	return WriteEscapedXML(str, strlen(str));
@@ -243,9 +254,11 @@ inline void XLXSWriter::WriteStyles() {
 	// 1 | 165: DD/MM/YY				(date)
 	// 2 | 166: DD/MM/YYYY HH:MM:SS		(timestamp)
 	// 3 | 167: HH:MM:SS				(time)
-	// 4 | 168: DD/MM/YYYY HH:MM:SS.000	(timestamp with milliseconds)
+	// 4 | 168: DD/MM/YYYY HH:MM:SS.000	(timestamp with milliseconds)*
 	// 5 | 169: TRUE/FALSE				(bool)
 	//--------------------------------------------------------------------------------------------------
+	// * Note: Excel can only display up to millisecond precision (even if we can store in microseconds)
+
 	static constexpr auto STYLES_XML = R"(<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 	<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
 		<numFmts count="6">
@@ -277,14 +290,17 @@ inline void XLXSWriter::WriteStyles() {
 				<diagonal/>
 			</border>
 		</borders>
-		<cellStyleXfs count="6">
+		<cellStyleXfs coun="1">
+			<xf numFmtId="164"></xf>
+		</cellStyleXfs>
+		<cellXfs count="6">
 			<xf numFmtId="164" xfId="0"/>
 			<xf numFmtId="165" xfId="0"/>
 			<xf numFmtId="166" xfId="0"/>
 			<xf numFmtId="167" xfId="0"/>
 			<xf numFmtId="168" xfId="0"/>
 			<xf numFmtId="169" xfId="0"/>
-		</cellStyleXfs>
+		</cellXfs>
 		<cellStyles count="1">
 			<cellStyle builtinId="0" customBuiltin="false" name="Normal" xfId="0"/>
 		</cellStyles>
@@ -298,48 +314,52 @@ inline void XLXSWriter::WriteStyles() {
 
 inline void XLXSWriter::WriteContentTypes() {
 	static constexpr auto CONTENT_TYPES_XML_START =
-		R"(<?xml version="1.0" encoding="UTF-8"?>)"
-		R"(<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">)"
-		R"(<Default Extension="xml" ContentType="application/xml"/>)"
-		R"(<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>)"
-		R"(<Default Extension="jpeg" ContentType="image/jpg"/>)"
-		R"(<Default Extension="png" ContentType="image/png"/>)"
-		R"(<Default Extension="bmp" ContentType="image/bmp"/>)"
-		R"(<Default Extension="gif" ContentType="image/gif"/>)"
-		R"(<Default Extension="tif" ContentType="image/tif"/>)"
-		R"(<Default Extension="pdf" ContentType="application/pdf"/>)"
-		R"(<Default Extension="mov" ContentType="application/movie"/>)"
-		R"(<Default Extension="vml" ContentType="application/vnd.openxmlformats-officedocument.vmlDrawing"/>)"
-		R"(<Default Extension="xlsx" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"/>)"
-		R"(<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-officedocument.core-properties+xml"/>)"
-		R"(<Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>)"
-		R"(<Override PartName="/xl/_rels/workbook.xml.rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>)"
+	    R"(<?xml version="1.0" encoding="UTF-8"?>)"
+	    R"(<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">)"
+	    R"(<Default Extension="xml" ContentType="application/xml"/>)"
+	    R"(<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>)"
+	    R"(<Default Extension="jpeg" ContentType="image/jpg"/>)"
+	    R"(<Default Extension="png" ContentType="image/png"/>)"
+	    R"(<Default Extension="bmp" ContentType="image/bmp"/>)"
+	    R"(<Default Extension="gif" ContentType="image/gif"/>)"
+	    R"(<Default Extension="tif" ContentType="image/tif"/>)"
+	    R"(<Default Extension="pdf" ContentType="application/pdf"/>)"
+	    R"(<Default Extension="mov" ContentType="application/movie"/>)"
+	    R"(<Default Extension="vml" ContentType="application/vnd.openxmlformats-officedocument.vmlDrawing"/>)"
+	    R"(<Default Extension="xlsx" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"/>)"
+	    R"(<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-officedocument.core-properties+xml"/>)"
+	    R"(<Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>)"
+	    R"(<Override PartName="/xl/_rels/workbook.xml.rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>)"
 	    R"(<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>)"
-		R"(<Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/>)"
-		R"(<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>)";
+	    R"(<Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/>)"
+	    R"(<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>)";
 	static constexpr auto CONTENT_TYPES_XML_END = R"(</Types>)";
-
 
 	stream.BeginFile("[Content_Types].xml");
 	stream.Write(CONTENT_TYPES_XML_START);
-	for(const auto &sheet : written_sheets) {
-        stream.Write(StringUtil::Format("<Override PartName=\"/xl/worksheets/%s\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>", sheet.sheet_file));
-    }
+	for (const auto &sheet : written_sheets) {
+		stream.Write(StringUtil::Format(
+		    "<Override PartName=\"/xl/worksheets/%s\" "
+		    "ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>",
+		    sheet.sheet_file));
+	}
 	stream.Write(CONTENT_TYPES_XML_END);
 	stream.EndFile();
 }
 
 inline void XLXSWriter::WriteRels() {
-	static constexpr auto WORKBOOK_REL_XML_START = R"(<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" Target="theme/theme1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/>)";
+	static constexpr auto WORKBOOK_REL_XML_START =
+	    R"(<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" Target="theme/theme1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/>)";
 	static constexpr auto WORKBOOK_REL_XML_END = R"(</Relationships>)";
-	static constexpr auto REL_SHEET_XML = R"(<Relationship Id="rId%d" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/%s"/>)";
+	static constexpr auto REL_SHEET_XML =
+	    R"(<Relationship Id="rId%d" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/%s"/>)";
 
 	stream.AddDirectory("xl/_rels/");
 
 	stream.BeginFile("xl/_rels/workbook.xml.rels");
 	stream.Write(WORKBOOK_REL_XML_START);
 	idx_t sheet_offset = 4;
-	for(const auto &sheet : written_sheets) {
+	for (const auto &sheet : written_sheets) {
 		stream.Write(StringUtil::Format(REL_SHEET_XML, sheet_offset++, sheet.sheet_file));
 	}
 	stream.Write(WORKBOOK_REL_XML_END);
@@ -347,14 +367,15 @@ inline void XLXSWriter::WriteRels() {
 }
 
 inline void XLXSWriter::WriteWorkbook() {
-	static constexpr auto WORKBOOK_XML_START = 	R"(<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:mx="http://schemas.microsoft.com/office/mac/excel/2008/main" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:mv="urn:schemas-microsoft-com:mac:vml" xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main" xmlns:x15="http://schemas.microsoft.com/office/spreadsheetml/2010/11/main" xmlns:x14ac="http://schemas.microsoft.com/office/spreadsheetml/2009/9/ac" xmlns:xm="http://schemas.microsoft.com/office/excel/2006/main"><workbookPr/><sheets>)";
+	static constexpr auto WORKBOOK_XML_START =
+	    R"(<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:mx="http://schemas.microsoft.com/office/mac/excel/2008/main" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:mv="urn:schemas-microsoft-com:mac:vml" xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main" xmlns:x15="http://schemas.microsoft.com/office/spreadsheetml/2010/11/main" xmlns:x14ac="http://schemas.microsoft.com/office/spreadsheetml/2009/9/ac" xmlns:xm="http://schemas.microsoft.com/office/excel/2006/main"><workbookPr/><sheets>)";
 	static constexpr auto WORKBOOK_XML_END = R"(</sheets><definedNames/><calcPr/></workbook>)";
 
 	stream.BeginFile("xl/workbook.xml");
 	stream.Write(WORKBOOK_XML_START);
 	idx_t sheet_offset = 4;
 	idx_t sheet_id = 1;
-	for(const auto &sheet : written_sheets) {
+	for (const auto &sheet : written_sheets) {
 		static constexpr auto SHEET_XML = R"(<sheet name="%s" state="visible" sheetId="%d" r:id="rId%d"/>)";
 		stream.Write(StringUtil::Format(SHEET_XML, sheet.sheet_name, sheet_id++, sheet_offset++));
 	}
@@ -364,7 +385,8 @@ inline void XLXSWriter::WriteWorkbook() {
 
 inline void XLXSWriter::WriteSharedStrings() {
 	// We dont use shared strings for now, but still create a dummy file
-	static constexpr auto SHARED_STRINGS_XML = R"(<?xml version="1.0" encoding="UTF-8" standalone="yes"?><sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="0" uniqueCount="0"/>)";
+	static constexpr auto SHARED_STRINGS_XML =
+	    R"(<?xml version="1.0" encoding="UTF-8" standalone="yes"?><sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="0" uniqueCount="0"/>)";
 
 	stream.BeginFile("xl/sharedStrings.xml");
 	stream.Write(SHARED_STRINGS_XML);
@@ -413,5 +435,4 @@ inline void XLXSWriter::WriteProps() {
 	stream.EndFile();
 }
 
-
-}
+} // namespace duckdb

@@ -24,12 +24,14 @@ struct XLSXCellPos {
 	idx_t row; // 1-indexed
 	idx_t col; // 1-indexed
 
-	XLSXCellPos(idx_t row_p, idx_t col_p) : row(row_p), col(col_p) { }
-	XLSXCellPos() : row(1), col(1) { }
+	XLSXCellPos(idx_t row_p, idx_t col_p) : row(row_p), col(col_p) {
+	}
+	XLSXCellPos() : row(1), col(1) {
+	}
 
 	// Try to parse a cell from a string, e.g. "A1"
 	// returns the position after the cell, or nullptr if parsing failed
-	const char* TryParse(const char *str);
+	const char *TryParse(const char *str);
 	string ToString() const;
 	string GetColumnName() const;
 };
@@ -38,16 +40,16 @@ inline const char *XLSXCellPos::TryParse(const char *str) {
 	// Parse the column
 
 	auto did_not_parse_col = false;
-	if(*str >= 'A' && *str <= 'Z') {
+	if (*str >= 'A' && *str <= 'Z') {
 		idx_t p_col = *str - 'A' + 1;
 		str++;
 
-		while(*str >= 'A' && *str <= 'Z') {
+		while (*str >= 'A' && *str <= 'Z') {
 			p_col = p_col * 26 + (*str - 'A' + 1);
 			str++;
 		}
 
-		if(p_col > XLSX_MAX_CELL_COLS) {
+		if (p_col > XLSX_MAX_CELL_COLS) {
 			return nullptr;
 		}
 		col = p_col;
@@ -57,15 +59,15 @@ inline const char *XLSXCellPos::TryParse(const char *str) {
 
 	// Parse the row
 	auto did_not_parse_row = false;
-	if(*str >= '1' && *str <= '9') {
+	if (*str >= '1' && *str <= '9') {
 		idx_t p_row = *str - '0';
 		str++;
 
-		while(*str >= '0' && *str <= '9') {
+		while (*str >= '0' && *str <= '9') {
 			p_row = p_row * 10 + (*str - '0');
 			str++;
 		}
-		if(p_row > XLSX_MAX_CELL_ROWS) {
+		if (p_row > XLSX_MAX_CELL_ROWS) {
 			return nullptr;
 		}
 		row = p_row;
@@ -73,7 +75,7 @@ inline const char *XLSXCellPos::TryParse(const char *str) {
 		did_not_parse_row = true;
 	}
 
-	if(did_not_parse_col && did_not_parse_row) {
+	if (did_not_parse_col && did_not_parse_row) {
 		// Well, we had to parse something...
 		return nullptr;
 	}
@@ -95,7 +97,7 @@ inline string XLSXCellPos::GetColumnName() const {
 	do {
 		result = static_cast<char>('A' + col % 26) + result;
 		col /= 26;
-	} while(col > 0);
+	} while (col > 0);
 	return result;
 }
 
@@ -112,34 +114,48 @@ struct XLSXCellRange {
 	XLSXCellPos end = {XLSX_MAX_CELL_ROWS, XLSX_MAX_CELL_COLS};
 
 	XLSXCellRange(idx_t beg_row, idx_t beg_col, idx_t end_row, idx_t end_col)
-		: beg(beg_row, beg_col), end(end_row, end_col) { }
+	    : beg(beg_row, beg_col), end(end_row, end_col) {
+	}
 
-	XLSXCellRange() : beg(1, 1), end(XLSX_MAX_CELL_ROWS, XLSX_MAX_CELL_COLS) { }
+	XLSXCellRange() : beg(1, 1), end(XLSX_MAX_CELL_ROWS, XLSX_MAX_CELL_COLS) {
+	}
 
 	// Try to parse a range from a string, e.g. "A1:B2"
 	// returns the position after the range, or nullptr if parsing failed
-	const char* TryParse(const char* str);
+	const char *TryParse(const char *str);
 
-	bool ContainsRow(const idx_t row) const { return row >= beg.row && row < end.row; }
-	bool ContainsCol(const idx_t col) const { return col >= beg.col && col < end.col; }
-	bool ContainsPos(const XLSXCellPos &pos) const { return ContainsCol(pos.col) && ContainsRow(pos.row); }
+	bool ContainsRow(const idx_t row) const {
+		return row >= beg.row && row < end.row;
+	}
+	bool ContainsCol(const idx_t col) const {
+		return col >= beg.col && col < end.col;
+	}
+	bool ContainsPos(const XLSXCellPos &pos) const {
+		return ContainsCol(pos.col) && ContainsRow(pos.row);
+	}
 
-	idx_t Width() const { return end.col - beg.col; }
-	idx_t Height() const { return end.row - beg.row; }
-	bool IsValid() const { return beg.row <= end.row && beg.col <= end.col; }
+	idx_t Width() const {
+		return end.col - beg.col;
+	}
+	idx_t Height() const {
+		return end.row - beg.row;
+	}
+	bool IsValid() const {
+		return beg.row <= end.row && beg.col <= end.col;
+	}
 };
 
-inline const char* XLSXCellRange::TryParse(const char* str) {
+inline const char *XLSXCellRange::TryParse(const char *str) {
 	// Parse the beginning cell
 
 	XLSXCellPos beg_result = {1, 1};
 	str = beg_result.TryParse(str);
-	if(!str) {
+	if (!str) {
 		return nullptr;
 	}
 
 	// Parse the colon
-	if(*str != ':') {
+	if (*str != ':') {
 		return nullptr;
 	}
 	str++;
@@ -147,7 +163,7 @@ inline const char* XLSXCellRange::TryParse(const char* str) {
 	// Parse the ending cell
 	XLSXCellPos end_result = {XLSX_MAX_CELL_ROWS, XLSX_MAX_CELL_COLS};
 	str = end_result.TryParse(str);
-	if(!str) {
+	if (!str) {
 		return nullptr;
 	}
 
@@ -158,11 +174,20 @@ inline const char* XLSXCellRange::TryParse(const char* str) {
 	return str;
 }
 
-enum class XLSXCellType : uint8_t { UNKNOWN, NUMBER, BOOLEAN, SHARED_STRING, INLINE_STRING, DATE, ERROR, FORMULA_STRING };
+enum class XLSXCellType : uint8_t {
+	UNKNOWN,
+	NUMBER,
+	BOOLEAN,
+	SHARED_STRING,
+	INLINE_STRING,
+	DATE,
+	ERROR,
+	FORMULA_STRING
+};
 
-inline XLSXCellType ParseCellType(const char* ctype) {
+inline XLSXCellType ParseCellType(const char *ctype) {
 	// If no type is specified, assume it is a number
-	if(!ctype) {
+	if (!ctype) {
 		return XLSXCellType::NUMBER;
 	}
 	if (strcmp(ctype, "n") == 0) {
@@ -177,7 +202,7 @@ inline XLSXCellType ParseCellType(const char* ctype) {
 	if (strcmp(ctype, "inlineStr") == 0) {
 		return XLSXCellType::INLINE_STRING;
 	}
-	if (strcmp(ctype, "str") == 0){
+	if (strcmp(ctype, "str") == 0) {
 		return XLSXCellType::FORMULA_STRING;
 	}
 	if (strcmp(ctype, "b") == 0) {
@@ -195,13 +220,15 @@ inline XLSXCellType ParseCellType(const char* ctype) {
 class XLSXStyleSheet {
 public:
 	XLSXStyleSheet() = default;
-	explicit XLSXStyleSheet(vector<LogicalType> &&formats_p) : formats(std::move(formats_p)) { }
+	explicit XLSXStyleSheet(vector<LogicalType> &&formats_p) : formats(std::move(formats_p)) {
+	}
 	optional_ptr<const LogicalType> GetFormat(const idx_t idx) const {
-		if(idx < formats.size()) {
+		if (idx < formats.size()) {
 			return &formats[idx];
 		}
 		return nullptr;
 	}
+
 private:
 	vector<LogicalType> formats;
 };
@@ -212,33 +239,34 @@ private:
 
 struct XLSXCell {
 	XLSXCellType type;
-	XLSXCellPos  cell;
-	string		 data;
-	idx_t		 style;
+	XLSXCellPos cell;
+	string data;
+	idx_t style;
 
 	XLSXCell(XLSXCellType type_p, XLSXCellPos cell_p, string data_p, idx_t style_p)
-		: type(type_p), cell(cell_p), data(std::move(data_p)), style(style_p) { }
+	    : type(type_p), cell(cell_p), data(std::move(data_p)), style(style_p) {
+	}
 
 	LogicalType GetDuckDBType(bool all_varchar, const XLSXStyleSheet &style_sheet) {
-		if(all_varchar) {
+		if (all_varchar) {
 			return LogicalType::VARCHAR;
 		}
 
 		// Check if we get a TRUE or FALSE value, if so, treat it as a boolean
-		if(StringUtil::CIEquals(data, "true")) {
+		if (StringUtil::CIEquals(data, "true")) {
 			return LogicalType::BOOLEAN;
 		}
-		if(StringUtil::CIEquals(data, "false")) {
+		if (StringUtil::CIEquals(data, "false")) {
 			return LogicalType::BOOLEAN;
 		}
 
-		switch(type) {
+		switch (type) {
 		case XLSXCellType::NUMBER: {
 			// The logical type of a number is dependent on the style of the cell
 			// Some styles are dates, some are doubles, some are integers
 			// (some are even postcodes or phone numbers, but we don't care about those for now)
 			auto optional_type = style_sheet.GetFormat(style);
-			if(optional_type) {
+			if (optional_type) {
 				return *optional_type;
 			}
 			// Default to double
@@ -260,4 +288,4 @@ struct XLSXCell {
 	}
 };
 
-}
+} // namespace duckdb

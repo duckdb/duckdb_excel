@@ -14,18 +14,20 @@ namespace duckdb {
 //-------------------------------------------------------------------
 class SharedStringParserBase : public XMLParser {
 protected:
-	virtual void OnUniqueCount(idx_t count) { }
+	virtual void OnUniqueCount(idx_t count) {
+	}
 	virtual void OnString(const vector<char> &str) = 0;
+
 private:
 	void OnStartElement(const char *name, const char **atts) override {
-		switch(state) {
+		switch (state) {
 		case State::START:
-			if(MatchTag("sst", name)) {
+			if (MatchTag("sst", name)) {
 				state = State::SST;
 				// Optionally look for the uniqueCount attributes
 				// TODO: Do we also look for count?
-				for(idx_t i = 0; atts[i]; i += 2) {
-					if(strcmp(atts[i], "uniqueCount") == 0) {
+				for (idx_t i = 0; atts[i]; i += 2) {
+					if (strcmp(atts[i], "uniqueCount") == 0) {
 						// TODO: Check that this succeeds!
 						const auto unique_count = atoi(atts[i + 1]);
 						OnUniqueCount(unique_count);
@@ -34,12 +36,12 @@ private:
 			}
 			break;
 		case State::SST:
-			if(MatchTag("si", name)) {
+			if (MatchTag("si", name)) {
 				state = State::SI;
 			}
 			break;
 		case State::SI:
-			if(MatchTag("t", name)) {
+			if (MatchTag("t", name)) {
 				state = State::T;
 				// Enable text handling
 				EnableTextHandler(true);
@@ -52,20 +54,20 @@ private:
 			// TODO: Count garbage iterations where we dont find anything and throw if we get too far
 			// to guard against corrupted files.
 			// we're probably going to have to set that in the parser base class itself
-		break;
+			break;
 		}
 	}
 	void OnEndElement(const char *name) override {
-		switch(state) {
+		switch (state) {
 		case State::T:
-			if(MatchTag("t", name)) {
+			if (MatchTag("t", name)) {
 				// Disable text handling
 				EnableTextHandler(false);
 				state = State::SI;
 			}
 			break;
 		case State::SI:
-			if(MatchTag("si", name)) {
+			if (MatchTag("si", name)) {
 				state = State::SST;
 				// Pass the string we've collected from the <t> tags to the handler
 				OnString(data);
@@ -74,7 +76,7 @@ private:
 			}
 			break;
 		case State::SST:
-			if(MatchTag("sst", name)) {
+			if (MatchTag("sst", name)) {
 				Stop(false);
 			}
 			break;
@@ -85,6 +87,7 @@ private:
 	void OnText(const char *text, const idx_t len) override {
 		data.insert(data.end(), text, text + len);
 	}
+
 private:
 	enum class State : uint8_t { START, SST, SI, T };
 	State state = State::START;
@@ -109,18 +112,19 @@ public:
 
 protected:
 	void OnString(const vector<char> &str) override {
-		if(current_idx >= ids.size()) {
+		if (current_idx >= ids.size()) {
 			// We're done, no more strings to find
 			Stop(false);
 			return;
 		}
 		const auto &id = ids[current_idx];
-		if(id == current_str) {
+		if (id == current_str) {
 			result[id] = string(str.data(), str.size());
 			current_idx++;
 		}
 		current_str++;
 	}
+
 private:
 	idx_t current_idx = 0;
 	idx_t current_str = 0;
@@ -141,9 +145,11 @@ public:
 		SharedStringParser parser(table);
 		parser.ParseAll(stream);
 	}
+
 private:
 	explicit SharedStringParser(StringTable &table_p) : table(table_p) {
 	}
+
 protected:
 	void OnString(const vector<char> &str) override {
 		table.Add(string_t(str.data(), str.size()));
@@ -151,8 +157,9 @@ protected:
 	void OnUniqueCount(const idx_t count) override {
 		table.Reserve(count);
 	}
+
 private:
 	StringTable &table;
 };
 
-}
+} // namespace duckdb

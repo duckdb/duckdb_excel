@@ -14,21 +14,23 @@ namespace duckdb {
 
 class StringTable {
 public:
-	explicit StringTable(Allocator &alloc) : arena(alloc) {}
+	explicit StringTable(Allocator &alloc) : arena(alloc) {
+	}
 	idx_t Add(const string_t &str);
-	const string_t& Get(idx_t val) const;
+	const string_t &Get(idx_t val) const;
 	void Reserve(idx_t count);
+
 private:
-	ArenaAllocator			arena;
-	string_map_t<idx_t>		table;
-	vector<string_t>		index; // todo: make this a reference to the key in the map?
+	ArenaAllocator arena;
+	string_map_t<idx_t> table;
+	vector<string_t> index; // todo: make this a reference to the key in the map?
 };
 
 inline idx_t StringTable::Add(const string_t &str) {
 
 	// Check if the string is already in the map
 	const auto found = table.find(str);
-	if(found != table.end()) {
+	if (found != table.end()) {
 		return found->second;
 	}
 
@@ -36,7 +38,7 @@ inline idx_t StringTable::Add(const string_t &str) {
 	const auto val = index.size();
 
 	// If the string is inlined, just store it in the map and vector
-	if(str.IsInlined()) {
+	if (str.IsInlined()) {
 		table[str] = val;
 		index.push_back(str);
 		return val;
@@ -55,7 +57,7 @@ inline idx_t StringTable::Add(const string_t &str) {
 	return val;
 }
 
-inline const string_t& StringTable::Get(const idx_t val) const {
+inline const string_t &StringTable::Get(const idx_t val) const {
 	return index[val];
 }
 

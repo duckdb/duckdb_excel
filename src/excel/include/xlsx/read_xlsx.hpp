@@ -9,7 +9,7 @@ namespace duckdb {
 class DatabaseInstance;
 
 struct WriteXLSX {
-  static void Register(DatabaseInstance &db);
+	static void Register(DatabaseInstance &db);
 };
 
 enum class XLSXHeaderMode : uint8_t { NEVER, MAYBE, FORCE };
@@ -28,8 +28,8 @@ public:
 
 class XLSXReadData final : public TableFunctionData {
 public:
-	string	file_path;
-	string	sheet_path;
+	string file_path;
+	string sheet_path;
 
 	vector<LogicalType> return_types;
 	vector<XLSXCellType> source_types;
