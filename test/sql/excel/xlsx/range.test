@@ -1,0 +1,16 @@
+require excel
+
+statement error
+SELECT * FROM read_xlsx('test/data/xlsx/google_sheets.xlsx', range := 'A1:ZZZZZZZZ5');
+----
+Binder Error: Invalid range 'A1:ZZZZZZZZ5' specified
+
+statement error
+SELECT * FROM read_xlsx('test/data/xlsx/google_sheets.xlsx', range := 'Z1:A5');
+----
+Binder Error: Invalid range 'Z1:A5' specified
+
+statement error
+SELECT * FROM read_xlsx('test/data/xlsx/google_sheets.xlsx', range := 'A5:A1');
+----
+Binder Error: Invalid range 'A5:A1' specified
