@@ -98,7 +98,8 @@ static void ParseXLSXFileMeta(const unique_ptr<XLSXReadData> &result, ZipFileRea
 			all_sheets.push_back(sheet.first);
 		}
 		auto suggestions = StringUtil::CandidatesErrorMessage(all_sheets, options.sheet, "Did you mean");
-		throw BinderException("Sheet \"%s\" not found in xlsx file \"%s\"%s", result->file_path, options.sheet, suggestions);
+		throw BinderException("Sheet \"%s\" not found in xlsx file \"%s\"%s", result->file_path, options.sheet,
+		                      suggestions);
 	}
 	result->sheet_path = found->second;
 }
@@ -377,6 +378,14 @@ int64_t ExcelToEpochUS(const double serial) {
 	const auto days = serial - DAYS_BETWEEN_1900_AND_1970;
 	const auto seconds = days * SECONDS_PER_DAY;
 	const auto micros = seconds * MICROSECONDS_PER_SECOND;
+
+	// Clamp to the range. Theres not much we can do if the value is out of range
+	if (micros <= static_cast<double>(NumericLimits<int64_t>::Minimum())) {
+		return NumericLimits<int64_t>::Minimum();
+	}
+	if (micros >= static_cast<double>(NumericLimits<int64_t>::Maximum())) {
+		return NumericLimits<int64_t>::Maximum();
+	}
 	return static_cast<int64_t>(micros);
 }
 

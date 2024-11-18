@@ -215,10 +215,11 @@ inline void XLXSWriter::EndRow() {
 	row_str = std::to_string(row_idx + 1);
 
 	if (row_idx > sheet_row_limit) {
-		if(sheet_row_limit >= XLSX_MAX_CELL_ROWS) {
+		if (sheet_row_limit >= XLSX_MAX_CELL_ROWS) {
 			const auto msg = "XLSX: Sheet row limit of '%d' rows exceeded!\n"
-			" * XLSX files and compatible applications generally have a limit of '%d' rows\n"
-			" * You can export larger sheets at your own risk by setting the 'sheet_row_limit' parameter to a higher value";
+			                 " * XLSX files and compatible applications generally have a limit of '%d' rows\n"
+			                 " * You can export larger sheets at your own risk by setting the 'sheet_row_limit' "
+			                 "parameter to a higher value";
 			throw InvalidInputException(msg, sheet_row_limit, XLSX_MAX_CELL_ROWS);
 		} else {
 			throw InvalidInputException("XLSX: Sheet row limit of '%d' rows exceeded!", sheet_row_limit);
