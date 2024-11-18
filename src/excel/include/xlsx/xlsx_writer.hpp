@@ -51,7 +51,7 @@ private:
 	};
 
 	ZipFileWriter stream;
-	idx_t sheet_row_limit;
+	idx_t sheet_row_limit = XLSX_MAX_CELL_ROWS;
 
 	// Current sheet data;
 	string row_str = "1";
@@ -215,7 +215,14 @@ inline void XLXSWriter::EndRow() {
 	row_str = std::to_string(row_idx + 1);
 
 	if (row_idx > sheet_row_limit) {
-		throw InvalidInputException("XLSX: Sheet row limit of '%s' rows exceeded!", sheet_row_limit);
+		if(sheet_row_limit >= XLSX_MAX_CELL_ROWS) {
+			const auto msg = "XLSX: Sheet row limit of '%d' rows exceeded!\n"
+			" * XLSX files and compatible applications generally have a limit of '%d' rows\n"
+			" * You can export larger sheets at your own risk by setting the 'sheet_row_limit' parameter to a higher value";
+			throw InvalidInputException(msg, sheet_row_limit, XLSX_MAX_CELL_ROWS);
+		} else {
+			throw InvalidInputException("XLSX: Sheet row limit of '%d' rows exceeded!", sheet_row_limit);
+		}
 	}
 }
 
