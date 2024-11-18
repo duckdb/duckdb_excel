@@ -20,6 +20,8 @@
 #include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/parser/tableref/table_function_ref.hpp"
 #include "duckdb/main/query_result.hpp"
+#include "duckdb/common/helper.hpp"
+#include "duckdb/function/replacement_scan.hpp"
 
 namespace duckdb {
 
