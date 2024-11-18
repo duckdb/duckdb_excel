@@ -270,7 +270,7 @@ inline void XLXSWriter::WriteStyles() {
 	static constexpr auto STYLES_XML = R"(<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 	<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
 		<numFmts count="6">
-		    <numFmt formatCode="GENERAL" numFmtId="164"/>
+		    <numFmt formatCode="General" numFmtId="164"/>
 		    <numFmt formatCode="DD/MM/YY" numFmtId="165"/>
 		    <numFmt formatCode="DD/MM/YYYY\ HH:MM:SS" numFmtId="166"/>
 		    <numFmt formatCode="HH:MM:SS" numFmtId="167"/>
@@ -298,7 +298,7 @@ inline void XLXSWriter::WriteStyles() {
 				<diagonal/>
 			</border>
 		</borders>
-		<cellStyleXfs coun="1">
+		<cellStyleXfs count="1">
 			<xf numFmtId="164"></xf>
 		</cellStyleXfs>
 		<cellXfs count="6">
