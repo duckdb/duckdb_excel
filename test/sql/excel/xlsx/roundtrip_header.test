@@ -1,0 +1,17 @@
+require excel
+
+statement ok
+COPY (SELECT 1 as xxx) TO 'test_header.xlsx' (FORMAT 'XLSX', HEADER true);
+
+query I
+SELECT xxx FROM read_xlsx('test_header.xlsx');
+----
+1
+
+statement ok
+COPY (SELECT 1 as xxx) TO '__TEST_DIR__/test_no_header.xlsx' (FORMAT 'XLSX', HEADER false);
+
+query I
+SELECT A1 FROM read_xlsx('__TEST_DIR__/test_no_header.xlsx');
+----
+1

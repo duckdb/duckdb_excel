@@ -1,0 +1,11 @@
+require excel
+
+query IIII
+SELECT sum(Col1), count(Col1), max(Col1), min(Col1) FROM 'test/data/xlsx/2x3000.xlsx'
+----
+4498500	2999	2999	1
+
+query II
+SELECT Col1::VARCHAR, Col2::VARCHAR FROM read_xlsx('test/data/xlsx/2x3000.xlsx') OFFSET 2998 LIMIT 1
+----
+2999.0	B
