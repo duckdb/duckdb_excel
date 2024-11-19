@@ -2,17 +2,17 @@ require excel
 
 statement error
 COPY (SELECT * FROM range(5000))
-TO '__TEST_DIR__/test_limit.xlsx' (FORMAT 'XLSX', sheet_row_limit 2049);
+TO '__TEST_DIR__/test_limit1.xlsx' (FORMAT 'XLSX', sheet_row_limit 2049);
 ----
 Invalid Input Error: XLSX: Sheet row limit of '2049' rows exceeded!
 
 statement ok
 COPY (SELECT * FROM range(1000))
-TO '__TEST_DIR__/test_limit.xlsx' (FORMAT 'XLSX', sheet_row_limit 2049);
+TO '__TEST_DIR__/test_limit2.xlsx' (FORMAT 'XLSX', sheet_row_limit 2049);
 
 statement error
 COPY (SELECT * FROM range(1048577))
-TO '__TEST_DIR__/test_limit.xlsx' (FORMAT 'XLSX', sheet_name 'test');
+TO '__TEST_DIR__/test_limit3.xlsx' (FORMAT 'XLSX', sheet_name 'test');
 ----
 Invalid Input Error: XLSX: Sheet row limit of '1048576' rows exceeded!
  * XLSX files and compatible applications generally have a limit of '1048576' rows
