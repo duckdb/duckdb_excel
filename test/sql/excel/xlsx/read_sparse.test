@@ -5,16 +5,16 @@ query I
 SELECT * FROM read_xlsx('test/data/xlsx/sparse.xlsx');
 ----
 
-query I
-DESCRIBE SELECT column_name, column_type FROM read_xlsx('test/data/xlsx/sparse.xlsx');
+query II
+SELECT column_name, column_type FROM (DESCRIBE FROM read_xlsx('test/data/xlsx/sparse.xlsx'));
 ----
-duckdb	DOUBLE
+duck	DOUBLE
 
 # But if we disable the header, we can read the cell
-query I
-DESCRIBE SELECT column_name, column_type FROM read_xlsx('test/data/xlsx/sparse.xlsx', header = false);
+query II
+SELECT column_name, column_type FROM (DESCRIBE FROM read_xlsx('test/data/xlsx/sparse.xlsx', header = false));
 ----
-R465
+R465	VARCHAR
 
 # Voila!
 query I

@@ -372,23 +372,30 @@ static unique_ptr<GlobalTableFunctionState> InitGlobal(ClientContext &context, T
 
 int64_t ExcelToEpochUS(const double serial) {
 	// Convert to microseconds since epoch
-	static constexpr auto SECONDS_PER_DAY = 86400;
-	static constexpr auto MICROSECONDS_PER_SECOND = 1000000;
-	static constexpr auto DAYS_BETWEEN_1900_AND_1970 = 25569;
+	static constexpr auto SECONDS_PER_DAY = 86400UL;
+	static constexpr auto MICROSECONDS_PER_SECOND = 1000000UL;
+	static constexpr auto DAYS_BETWEEN_1900_AND_1970 = 25569UL;
 
 	// Excel serial is days since 1900-01-01
-	const auto days = serial - DAYS_BETWEEN_1900_AND_1970;
-	const auto seconds = days * SECONDS_PER_DAY;
-	const auto micros = seconds * MICROSECONDS_PER_SECOND;
+	const auto serial_days = serial;
+	auto serial_secs = serial_days * SECONDS_PER_DAY;
+
+	if (std::fabs(serial_secs - std::round(serial_secs)) < 1e-3) {
+		serial_secs = std::round(serial_secs);
+	}
+
+	const auto epoch_secs = serial_secs - (DAYS_BETWEEN_1900_AND_1970 * SECONDS_PER_DAY);
+	const auto epoch_micros = epoch_secs * MICROSECONDS_PER_SECOND;
 
 	// Clamp to the range. Theres not much we can do if the value is out of range
-	if (micros <= static_cast<double>(NumericLimits<int64_t>::Minimum())) {
+	if (epoch_micros <= static_cast<double>(NumericLimits<int64_t>::Minimum())) {
 		return NumericLimits<int64_t>::Minimum();
 	}
-	if (micros >= static_cast<double>(NumericLimits<int64_t>::Maximum())) {
+	if (epoch_micros >= static_cast<double>(NumericLimits<int64_t>::Maximum())) {
 		return NumericLimits<int64_t>::Maximum();
 	}
-	return static_cast<int64_t>(micros);
+
+	return static_cast<int64_t>(epoch_micros);
 }
 
 static void TryCast(XLSXGlobalState &state, bool ignore_errors, const idx_t col_idx, ClientContext &context,

@@ -16,4 +16,4 @@ TO '__TEST_DIR__/test_limit.xlsx' (FORMAT 'XLSX', sheet_name 'test');
 ----
 Invalid Input Error: XLSX: Sheet row limit of '1048576' rows exceeded!
  * XLSX files and compatible applications generally have a limit of '1048576' rows
- * You can export larger sheets on your own risk by setting the 'sheet_row_limit' parameter to a higher value
+ * You can export larger sheets at your own risk by setting the 'sheet_row_limit' parameter to a higher value
