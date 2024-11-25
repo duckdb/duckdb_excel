@@ -6,5 +6,4 @@ duckdb_extension_load(excel
     INCLUDE_DIR ${CMAKE_CURRENT_LIST_DIR}/src/excel/include
     LOAD_TESTS
     LINKED_LIBS "../../vcpkg_installed/wasm32-emscripten/lib/lib*.a"
-    DONT_LINK
 )
