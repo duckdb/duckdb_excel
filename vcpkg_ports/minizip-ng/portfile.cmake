@@ -31,6 +31,7 @@ vcpkg_cmake_configure(
         -DMZ_FETCH_LIBS=OFF
         -DMZ_LIB_SUFFIX=-ng
         -DMZ_ICONV=OFF
+        -DCMAKE_POSITION_INDEPENDENT_CODE=ON
 )
 
 vcpkg_cmake_install()
