@@ -176,6 +176,10 @@ void ReadXLSX::ParseOptions(XLSXReadOptions &options, const named_parameter_map_
 		if (!range.IsValid()) {
 			throw BinderException("Invalid range '%s' specified", range_str);
 		}
+		// We do allow more rows than the maximum, but not more columns, because DuckDB kind of breaks down otherwise.
+		if (range.Width() > XLSX_MAX_CELL_COLS) {
+			throw BinderException("Invalid range '%s' specified", range_str);
+		}
 
 		// Make sure the range is inclusive of the last cell
 		range.end.col++;

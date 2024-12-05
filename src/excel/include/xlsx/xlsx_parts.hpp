@@ -48,10 +48,6 @@ inline const char *XLSXCellPos::TryParse(const char *str) {
 			p_col = p_col * 26 + (*str - 'A' + 1);
 			str++;
 		}
-
-		if (p_col > XLSX_MAX_CELL_COLS) {
-			return nullptr;
-		}
 		col = p_col;
 	} else {
 		did_not_parse_col = true;
@@ -66,9 +62,6 @@ inline const char *XLSXCellPos::TryParse(const char *str) {
 		while (*str >= '0' && *str <= '9') {
 			p_row = p_row * 10 + (*str - '0');
 			str++;
-		}
-		if (p_row > XLSX_MAX_CELL_ROWS) {
-			return nullptr;
 		}
 		row = p_row;
 	} else {
@@ -109,15 +102,15 @@ inline string XLSXCellPos::GetColumnName() const {
 struct XLSXCellRange {
 
 	// 1-indexed, inclusive
-	XLSXCellPos beg = {1, 1};
+	XLSXCellPos beg;
 	// 1-indexed, exlusive
-	XLSXCellPos end = {XLSX_MAX_CELL_ROWS, XLSX_MAX_CELL_COLS};
+	XLSXCellPos end;
 
 	XLSXCellRange(idx_t beg_row, idx_t beg_col, idx_t end_row, idx_t end_col)
 	    : beg(beg_row, beg_col), end(end_row, end_col) {
 	}
 
-	XLSXCellRange() : beg(1, 1), end(XLSX_MAX_CELL_ROWS, XLSX_MAX_CELL_COLS) {
+	XLSXCellRange() : beg(1, 1), end(NumericLimits<idx_t>::Maximum(), XLSX_MAX_CELL_COLS) {
 	}
 
 	// Try to parse a range from a string, e.g. "A1:B2"
@@ -190,28 +183,33 @@ inline XLSXCellType ParseCellType(const char *ctype) {
 	if (!ctype) {
 		return XLSXCellType::NUMBER;
 	}
-	if (strcmp(ctype, "n") == 0) {
+	switch (*ctype++) {
+	case 'n':
 		return XLSXCellType::NUMBER;
+	case 's': {
+		if (*ctype == 0) {
+			return XLSXCellType::SHARED_STRING;
+		}
+		if (strcmp(ctype, "tr") == 0) {
+			return XLSXCellType::FORMULA_STRING;
+		}
+		return XLSXCellType::UNKNOWN;
 	}
-	if (strcmp(ctype, "s") == 0) {
-		return XLSXCellType::SHARED_STRING;
-	}
-	if (strcmp(ctype, "d") == 0) {
+	case 'd':
 		return XLSXCellType::DATE;
-	}
-	if (strcmp(ctype, "inlineStr") == 0) {
-		return XLSXCellType::INLINE_STRING;
-	}
-	if (strcmp(ctype, "str") == 0) {
-		return XLSXCellType::FORMULA_STRING;
-	}
-	if (strcmp(ctype, "b") == 0) {
+	case 'b':
 		return XLSXCellType::BOOLEAN;
-	}
-	if (strcmp(ctype, "e") == 0) {
+	case 'e':
 		return XLSXCellType::ERROR;
+	case 'i': {
+		if (strcmp(ctype, "nlineStr") == 0) {
+			return XLSXCellType::INLINE_STRING;
+		}
+		return XLSXCellType::UNKNOWN;
 	}
-	return XLSXCellType::UNKNOWN;
+	default:
+		return XLSXCellType::UNKNOWN;
+	}
 }
 
 //-------------------------------------------------------------------------

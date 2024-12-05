@@ -95,7 +95,7 @@ inline void SheetParserBase::OnStartElement(const char *name, const char **atts)
 		} else {
 			XLSXCellPos cref;
 			if (!cref.TryParse(cref_ptr)) {
-				throw InvalidInputException("Invalid cell reference in sheet");
+				throw InvalidInputException("Invalid cell reference in sheet: %s", cref_ptr);
 			}
 			if (cref.row != cell_pos.row) {
 				throw InvalidInputException("Cell reference does not match row reference in sheet");
@@ -165,10 +165,10 @@ private:
 inline XLSXCellRange RangeSniffer::GetRange() const {
 	if (beg_row == 0) {
 		// We didnt find any rows... return the whole sheet
-		return XLSXCellRange(1, 1, XLSX_MAX_CELL_ROWS, XLSX_MAX_CELL_COLS);
+		return XLSXCellRange();
 	}
 	// Otherwise, return the sniffed range
-	return XLSXCellRange(beg_row, beg_col, XLSX_MAX_CELL_ROWS, end_col + 1);
+	return XLSXCellRange(beg_row, beg_col, NumericLimits<idx_t>::Maximum(), end_col + 1);
 }
 
 inline void RangeSniffer::OnCell(const XLSXCellPos &pos, XLSXCellType type, vector<char> &data, idx_t style) {

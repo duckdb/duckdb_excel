@@ -311,14 +311,17 @@ bool ZipFileReader::TryOpenEntry(const string &file_name) {
 	if (mz_zip_reader_locate_entry(handle, file_name.c_str(), 0) != MZ_OK) {
 		return false;
 	}
+
 	if (mz_zip_reader_entry_open(handle) != MZ_OK) {
 		return false;
 	}
 
-	const auto len = mz_zip_reader_entry_save_buffer_length(handle);
-	if (len < 0) {
+	mz_zip_file *file_info = nullptr;
+	if (mz_zip_reader_entry_get_info(handle, &file_info) != MZ_OK) {
 		return false;
 	}
+
+	const auto len = file_info->uncompressed_size;
 
 	is_entry_open = true;
 	entry_pos = 0;
