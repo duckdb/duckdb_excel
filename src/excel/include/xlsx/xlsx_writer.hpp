@@ -271,10 +271,10 @@ inline void XLXSWriter::WriteStyles() {
 	<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
 		<numFmts count="6">
 		    <numFmt formatCode="General" numFmtId="164"/>
-		    <numFmt formatCode="DD/MM/YY" numFmtId="165"/>
-		    <numFmt formatCode="DD/MM/YYYY\ HH:MM:SS" numFmtId="166"/>
-		    <numFmt formatCode="HH:MM:SS" numFmtId="167"/>
-			<numFmt formatCode="DD/MM/YYYY\ HH:MM:SS.000" numFmtId="168"/>
+		    <numFmt formatCode="dd/mm/yy" numFmtId="165"/>
+		    <numFmt formatCode="dd/mm/yyyy\ hh:mm:ss" numFmtId="166"/>
+		    <numFmt formatCode="hh:mm:ss" numFmtId="167"/>
+			<numFmt formatCode="dd/mm/yyyy\ hh:mm:ss.000" numFmtId="168"/>
 			<numFmt formatCode="&quot;TRUE&quot;;&quot;TRUE&quot;;&quot;FALSE&quot;" numFmtId="169"/>
 		</numFmts>
 		<fonts count="1">

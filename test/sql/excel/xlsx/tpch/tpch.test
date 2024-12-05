@@ -1,0 +1,13 @@
+require excel
+
+require tpch
+
+statement ok
+CALL dbgen(sf=0.01);
+
+statement ok
+COPY lineitem TO '__TEST_DIR__/lineitem.xlsx' (FORMAT 'XLSX');
+
+statement ok
+CREATE TABLE AS t1 SELECT * FROM '__TEST_DIR__/lineitem.xlsx';
+----
