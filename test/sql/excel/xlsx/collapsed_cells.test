@@ -1,0 +1,23 @@
+require excel
+
+# Try reading a file with collapsed cells
+
+query IIII
+SELECT * FROM 'test/data/xlsx/collapsed_cells.xlsx'
+----
+a	b	c	d
+a	2x1	NULL	b
+a	b	c	d
+1x2	b	2x2	NULL
+NULL	b	NULL	NULL
+
+query III
+SELECT * FROM read_xlsx('test/data/xlsx/collapsed_cells_jagged.xlsx', header=false, stop_at_empty=false);
+----
+a	b	c
+a	b	c
+a	b	2x1
+a	b	c
+a	b	c
+a	1x2	c
+NULL	NULL	NULL

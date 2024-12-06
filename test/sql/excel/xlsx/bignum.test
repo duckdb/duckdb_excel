@@ -1,0 +1,26 @@
+require excel
+
+# Note: DuckDB will write out large numbers in scientific notation.
+# I cant find anything in the standard about it, but it seems like thats OK for applications that can read xlsx files.
+# I suppose most just call `strtod` or equivalent on the cell contents and get the number back.
+
+query I
+SELECT 10000000000000000::DOUBLE;
+----
+1e+16
+
+statement ok
+COPY (SELECT 10000000000000000::DOUBLE as big) TO '__TEST_DIR__/test_bignum.xlsx' (FORMAT 'XLSX');
+
+query I
+SELECT typeof(COLUMNS(*)) FROM '__TEST_DIR__/test_bignum.xlsx';
+----
+DOUBLE
+
+query I
+SELECT * FROM '__TEST_DIR__/test_bignum.xlsx';
+----
+10000000000000000
+
+
+

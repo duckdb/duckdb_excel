@@ -1,14 +1,18 @@
 #define DUCKDB_EXTENSION_MAIN
 
+#include "excel_extension.hpp"
+
 #include "duckdb.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/function/scalar_function.hpp"
 #include "duckdb/main/extension_util.hpp"
-#include "excel_extension.hpp"
 #include "nf_calendar.h"
 #include "nf_localedata.h"
 #include "nf_zformat.h"
+#include "xlsx/read_xlsx.hpp"
+
+#include <duckdb/common/types/time.hpp>
 
 namespace duckdb {
 
@@ -58,6 +62,14 @@ static void NumberFormatFunction(DataChunk &args, ExpressionState &state, Vector
 	    [&](double value, string_t format) { return NumberFormatScalarFunction(result, value, format); });
 }
 
+//--------------------------------------------------------------------------------------------------
+// Time conversion functions
+//--------------------------------------------------------------------------------------------------
+
+//--------------------------------------------------------------------------------------------------
+// Load
+//--------------------------------------------------------------------------------------------------
+
 void ExcelExtension::Load(DuckDB &db) {
 	auto &db_instance = *db.instance;
 
@@ -67,7 +79,12 @@ void ExcelExtension::Load(DuckDB &db) {
 
 	ScalarFunction excel_text_func("excel_text", {LogicalType::DOUBLE, LogicalType::VARCHAR}, LogicalType::VARCHAR,
 	                               NumberFormatFunction);
+
 	ExtensionUtil::RegisterFunction(db_instance, excel_text_func);
+
+	// Register the XLSX functions
+	ReadXLSX::Register(db_instance);
+	WriteXLSX::Register(db_instance);
 }
 
 std::string ExcelExtension::Name() {

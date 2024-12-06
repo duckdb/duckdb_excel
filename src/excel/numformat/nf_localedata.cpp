@@ -1,7 +1,6 @@
 #include "nf_calendar.h"
 #include "nf_localedata.h"
 
-
 namespace duckdb_excel {
 
 LocaleData::LocaleData() {
@@ -183,4 +182,4 @@ void LocaleData::LoadLocaleData() {
 	m_locale_list[LocaleId_fr_FR].eras.push_back({L"apr. J.-C.", L"ap. J.-C."});
 }
 
-}	// namespace duckdb_excel
+} // namespace duckdb_excel

@@ -1,0 +1,57 @@
+require excel
+
+# Timestamp (with microseconds) test
+
+statement ok
+COPY (SELECT '2024-11-18 14:02:08.049'::TIMESTAMP as t)
+TO '__TEST_DIR__/test_timestamp.xlsx' (FORMAT 'XLSX', header true);
+
+query II
+SELECT typeof(t), t FROM '__TEST_DIR__/test_timestamp.xlsx';
+----
+TIMESTAMP	2024-11-18 14:02:08.049
+
+# Timestamp with nanoseconds test
+
+statement ok
+COPY (SELECT '2024-11-18 14:02:08.049'::TIMESTAMP_NS as t) TO '__TEST_DIR__/test_timestamp_ns.xlsx' (FORMAT 'XLSX', header true);
+
+query II
+SELECT typeof(t), t FROM '__TEST_DIR__/test_timestamp_ns.xlsx';
+----
+TIMESTAMP	2024-11-18 14:02:08.049
+
+# Timestamp with milliseconds test
+statement ok
+COPY (SELECT '2024-11-18 14:02:08.049'::TIMESTAMP_MS as t) TO '__TEST_DIR__/test_timestamp_ms.xlsx' (FORMAT 'XLSX', header true);
+
+query II
+SELECT typeof(t), t FROM '__TEST_DIR__/test_timestamp_ms.xlsx';
+----
+TIMESTAMP	2024-11-18 14:02:08.049
+
+# Timestamp with seconds test
+statement ok
+COPY (SELECT '2024-11-18 14:02:08.049'::TIMESTAMP_S as t) TO '__TEST_DIR__/test_timestamp_s.xlsx' (FORMAT 'XLSX', header true);
+
+query II
+SELECT typeof(t), t FROM '__TEST_DIR__/test_timestamp_s.xlsx';
+----
+TIMESTAMP	2024-11-18 14:02:08
+
+# Timestamp with time zone test
+statement ok
+COPY (SELECT now() as t) TO '__TEST_DIR__/test_timestamptz.xlsx' (FORMAT 'XLSX', header true);
+
+# timestamp_tz are converted to timestamp
+query I
+SELECT typeof(t) FROM '__TEST_DIR__/test_timestamptz.xlsx';
+----
+TIMESTAMP
+
+query I
+SELECT t > (now()::TIMESTAMP - INTERVAL 1 MINUTE) FROM '__TEST_DIR__/test_timestamptz.xlsx';
+----
+true
+
+

@@ -1,0 +1,13 @@
+require excel
+
+query IIII
+select * from read_xlsx('test/data/xlsx/header_only.xlsx')
+----
+
+query IIIIII rowsort
+DESCRIBE SELECT * FROM read_xlsx('test/data/xlsx/header_only.xlsx');
+----
+Header1	DOUBLE	YES	NULL	NULL	NULL
+Header2	DOUBLE	YES	NULL	NULL	NULL
+Header3	DOUBLE	YES	NULL	NULL	NULL
+Header4	DOUBLE	YES	NULL	NULL	NULL

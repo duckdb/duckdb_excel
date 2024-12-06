@@ -1,0 +1,51 @@
+require excel
+
+# By default we use the first sheet
+query II
+SELECT * FROM read_xlsx('test/data/xlsx/two_sheets.xlsx')
+----
+42	1337
+
+query II
+SELECT * FROM read_xlsx('test/data/xlsx/two_sheets.xlsx', header = false)
+----
+A	B
+42.0	1337.0
+
+
+query II
+SELECT X, Y FROM read_xlsx('test/data/xlsx/two_sheets.xlsx', sheet = 'My Sheet', header = true)
+----
+foo	bar
+
+query II
+SELECT * FROM read_xlsx('test/data/xlsx/two_sheets.xlsx', sheet = 'My Sheet', header = false)
+----
+X	Y
+foo	bar
+
+query III
+SELECT * FROM read_xlsx('test/data/xlsx/two_sheets.xlsx', sheet = 'My Sheet', range := 'A1:C4')
+----
+NULL	NULL	NULL
+NULL	NULL	NULL
+NULL	X	Y
+NULL	foo	bar
+
+query III
+SELECT * FROM read_xlsx('test/data/xlsx/two_sheets.xlsx', sheet = 'My Sheet', range := 'A2:C4')
+----
+NULL	NULL	NULL
+NULL	X	Y
+NULL	foo	bar
+
+query II
+SELECT X, Y FROM read_xlsx('test/data/xlsx/two_sheets.xlsx', sheet = 'My Sheet', range := 'B3:C4', header = true)
+----
+foo	bar
+
+# Sheet not found? Provide suggestions
+statement error
+SELECT * FROM read_xlsx('test/data/xlsx/two_sheets.xlsx', sheet = 'Sh')
+----
+Did you mean: "Sheet1", "My Sheet"

@@ -1,0 +1,10 @@
+require excel
+
+# Just test that we can write all types for now
+
+statement ok
+COPY (SELECT * FROM test_all_types()) TO '__TEST_DIR__/all_types.xlsx' (FORMAT 'XLSX', HEADER true, SHEET 'test_sheet_name');
+
+# Just test that we can read without errors, we don't check the content for now
+statement ok
+SELECT * FROM '__TEST_DIR__/all_types.xlsx';

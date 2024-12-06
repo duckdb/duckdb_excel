@@ -1,0 +1,37 @@
+require excel
+
+# By default we try to auto infer the first row as a header
+query III
+SELECT * FROM 'test/data/xlsx/google_sheets.xlsx'
+----
+123	500,60	ABC
+456	300,40	some text
+
+query IIIIII
+DESCRIBE FROM 'test/data/xlsx/google_sheets.xlsx'
+----
+ABC	DOUBLE	YES	NULL	NULL	NULL
+HELLO	VARCHAR	YES	NULL	NULL	NULL
+WORLD	VARCHAR	YES	NULL	NULL	NULL
+
+# The first row is now part of the data
+query III
+SELECT * FROM read_xlsx('test/data/xlsx/google_sheets.xlsx', header = false)
+----
+ABC	HELLO	WORLD
+123.0	500,60	ABC
+456.0	300,40	some text
+
+# Since the first row now contains all varchars, we infer the type of the columns as varchar too
+query IIIIII
+DESCRIBE FROM read_xlsx('test/data/xlsx/google_sheets.xlsx', header = false)
+----
+A1	VARCHAR	YES	NULL	NULL	NULL
+B1	VARCHAR	YES	NULL	NULL	NULL
+C1	VARCHAR	YES	NULL	NULL	NULL
+
+# We can also skip a couple of rows by providing a range explicitly
+query III
+SELECT * FROM read_xlsx('./test/data/xlsx/google_sheets.xlsx', range := 'A3:C3', header = false);
+----
+456.0	300,40	some text
